@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+libvirt-python
+jinja2
+pydantic>=2
+psutil
+httpx
+pytest
+pytest-asyncio
+anyio
