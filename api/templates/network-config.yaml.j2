@@ -1,0 +1,9 @@
+version: 2
+ethernets:
+  enp1s0:
+    addresses:
+      - {{ static_ip }}/{{ prefix_length }}
+    gateway4: {{ gateway }}
+    nameservers:
+      addresses:
+        - {{ dns }}

@@ -1,9 +1,10 @@
 """Pydantic v2 request/response models shared across routers."""
 from __future__ import annotations
 
+import re
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -100,3 +101,97 @@ class SyncStatus(BaseModel):
     finished_at: Optional[str] = Field(None, description="ISO-8601 timestamp when sync finished")
     returncode: Optional[int] = Field(None, description="Exit code of the sync script")
     log: Optional[str] = Field(None, description="Captured stdout/stderr from the sync script")
+
+
+# ---------------------------------------------------------------------------
+# Virtual Machines
+# ---------------------------------------------------------------------------
+
+class ProvisionRequest(BaseModel):
+    """Request body for POST /vms/provision."""
+
+    vm_name: str = Field(..., description="VM name: lowercase letters, digits, and hyphens, max 32 chars")
+    ubuntu_version: Literal["2004", "2204", "2404"] = Field(..., description="Ubuntu version to provision")
+    cpu: int = Field(..., ge=1, le=32, description="Number of vCPUs (1-32)")
+    ram_mb: int = Field(..., ge=512, le=524288, description="RAM in MB (512-524288)")
+    disk_gb: int = Field(..., ge=5, le=2000, description="Disk size in GB (5-2000)")
+    ssh_public_key: str = Field(..., description="SSH public key to inject into the VM")
+    network: str = Field("public", description="libvirt network name or 'macvtap'")
+    ip_mode: Literal["dhcp", "static"] = Field("dhcp", description="IP assignment mode")
+    static_ip: Optional[str] = Field(None, description="Static IP address (required when ip_mode=static)")
+    subnet_mask: Optional[str] = Field("255.255.255.0", description="Subnet mask for static IP")
+    gateway: Optional[str] = Field(None, description="Gateway IP (required when ip_mode=static)")
+    dns: Optional[str] = Field("8.8.8.8", description="DNS server IP")
+    storage_pool: Optional[str] = Field(None, description="Storage pool name (uses default if omitted)")
+
+    @field_validator("vm_name")
+    @classmethod
+    def validate_vm_name(cls, v: str) -> str:
+        if not re.match(r"^[a-z0-9][a-z0-9\-]{0,31}$", v):
+            raise ValueError(
+                "vm_name must be lowercase letters, digits, and hyphens only, max 32 chars"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_static_ip_fields(self) -> "ProvisionRequest":
+        if self.ip_mode == "static":
+            if not self.static_ip:
+                raise ValueError("static_ip is required when ip_mode is 'static'")
+            if not self.gateway:
+                raise ValueError("gateway is required when ip_mode is 'static'")
+        return self
+
+
+class VMSummary(BaseModel):
+    """Summary information for a VM shown in list views."""
+
+    name: str
+    state: str
+    vcpus: int
+    ram_mb: int
+    ip: Optional[str] = None
+    network: Optional[str] = None
+    uptime: Optional[int] = None  # seconds since boot (best-effort)
+
+
+class VMDetail(VMSummary):
+    """Full VM details including CPU/RAM usage and VNC port."""
+
+    cpu_percent: Optional[float] = None
+    ram_used_mb: Optional[int] = None
+    ram_total_mb: Optional[int] = None
+    disk_gb: Optional[int] = None
+    vnc_port: Optional[int] = None
+    os_variant: Optional[str] = None
+
+
+class ResizeRequest(BaseModel):
+    """Request body for PATCH /vms/{name}/resize."""
+
+    cpu: Optional[int] = Field(None, ge=1, le=32, description="New vCPU count")
+    ram_mb: Optional[int] = Field(None, ge=512, le=524288, description="New RAM in MB")
+    disk_gb: Optional[int] = Field(None, ge=5, le=2000, description="New disk size in GB")
+
+
+class NetworkUpdateRequest(BaseModel):
+    """Request body for PATCH /vms/{name}/network."""
+
+    network: str = Field(..., description="Target network name or 'macvtap'")
+    ip_mode: Literal["dhcp", "static"] = Field("dhcp", description="IP assignment mode")
+    static_ip: Optional[str] = Field(None, description="Static IP address")
+    subnet_mask: Optional[str] = Field("255.255.255.0", description="Subnet mask")
+    gateway: Optional[str] = Field(None, description="Gateway IP")
+    dns: Optional[str] = Field("8.8.8.8", description="DNS server IP")
+
+
+class ProvisionResult(BaseModel):
+    """Response body for POST /vms/provision."""
+
+    vm_name: str
+    status: str
+    ip: Optional[str] = None
+    vnc_port: Optional[int] = None
+    network: str
+    ip_mode: str
+    message: Optional[str] = None

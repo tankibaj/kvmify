@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import images, networks, pools
+from api.routers import images, networks, pools, vms
 
 # ---------------------------------------------------------------------------
 # Application
@@ -47,3 +47,4 @@ def health_check() -> dict[str, str]:
 app.include_router(networks.router, prefix="/networks", tags=["networks"])
 app.include_router(pools.router, prefix="/pools", tags=["pools"])
 app.include_router(images.router, prefix="/images", tags=["images"])
+app.include_router(vms.router, prefix="/vms", tags=["vms"])
