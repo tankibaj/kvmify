@@ -231,10 +231,13 @@ export function useSyncImages() {
   const qc = useQueryClient()
   const notify = useNotify()
   return useMutation({
-    mutationFn: () => apiFetch('/images/sync', { method: 'POST' }),
+    // Pass a version key ("2004"|"2204"|"2404") to sync one image; omit for all.
+    mutationFn: (version) =>
+      apiFetch('/images/sync', { method: 'POST', body: version ? { version } : {} }),
     onSuccess: () => {
       notify.success('Image sync started')
       qc.invalidateQueries({ queryKey: ['images'] })
+      qc.invalidateQueries({ queryKey: ['image-sync-status'] })
     },
     onError: (err) => notify.error(err.message),
   })
