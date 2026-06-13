@@ -1,0 +1,15 @@
+[Unit]
+Description=KVMify FastAPI Backend
+After=network.target libvirtd.service
+Wants=libvirtd.service
+
+[Service]
+User=naim
+Group=naim
+WorkingDirectory=/home/naim/kvmify
+ExecStart=/home/naim/kvmify/api/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
