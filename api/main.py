@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import images, networks, pools, vms
+from api.routers import host, images, networks, pools, snapshots, vms
 
 # ---------------------------------------------------------------------------
 # Application
@@ -48,3 +48,6 @@ app.include_router(networks.router, prefix="/networks", tags=["networks"])
 app.include_router(pools.router, prefix="/pools", tags=["pools"])
 app.include_router(images.router, prefix="/images", tags=["images"])
 app.include_router(vms.router, prefix="/vms", tags=["vms"])
+app.include_router(snapshots.router, prefix="/vms", tags=["snapshots"])
+app.include_router(host.router, prefix="/host", tags=["host"])
+# Add new routers here

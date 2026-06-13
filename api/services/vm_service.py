@@ -12,6 +12,8 @@ import time
 import xml.etree.ElementTree as ET
 from typing import Optional
 
+import psutil
+
 import libvirt
 
 from api import config, schemas
@@ -547,6 +549,50 @@ def update_network(
         "network": req.network,
         "ip_mode": req.ip_mode,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stats helpers
+# ---------------------------------------------------------------------------
+
+def _sleep(seconds: float) -> None:
+    """Thin wrapper around time.sleep — monkeypatched in tests."""
+    time.sleep(seconds)
+
+
+def sample_cpu_percent(
+    conn: libvirt.virConnect,
+    name: str,
+    interval: float = 0.5,
+) -> Optional[float]:
+    """Return a two-sample CPU utilisation percentage for a domain.
+
+    Reads cpu_time (nanoseconds, field index 4 of domain.info()) twice,
+    separated by *interval* seconds, then computes:
+
+        delta_cpu_ns / (interval * 1e9 * host_cpu_count) * 100
+
+    Clamped to [0, 100].  Returns None on any error.
+    """
+    domain = libvirt_service.get_domain(conn, name)
+    try:
+        host_cpu_count: int = conn.getInfo()[2]
+        if host_cpu_count < 1:
+            host_cpu_count = 1
+
+        info1 = domain.info()
+        cpu_time1: int = info1[4]
+
+        _sleep(interval)
+
+        info2 = domain.info()
+        cpu_time2: int = info2[4]
+
+        delta_ns = cpu_time2 - cpu_time1
+        cpu_pct = (delta_ns / (interval * 1e9 * host_cpu_count)) * 100.0
+        return round(max(0.0, min(100.0, cpu_pct)), 1)
+    except (libvirt.libvirtError, Exception):
+        return None
 
 
 # ---------------------------------------------------------------------------

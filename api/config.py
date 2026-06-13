@@ -57,6 +57,12 @@ OS_VARIANTS: dict[str, str] = {
     "2404": "ubuntu24.04",
 }
 
+# Host disk path for disk_usage stats
+HOST_DISK_PATH: str = os.getenv("KVMIFY_HOST_DISK_PATH", "/")
+
+# Pool disk path for disk_usage stats
+POOL_DISK_PATH: str = os.getenv("KVMIFY_POOL_DISK_PATH", "/mnt/nvme1")
+
 # Ubuntu version → base image filename under BASE_IMAGE_DIR
 BASE_IMAGE_NAMES: dict[str, str] = {
     "2004": "ubuntu-2004-base.img",

@@ -1,6 +1,7 @@
 """VMs router — thin HTTP layer delegating to vm_service."""
 from __future__ import annotations
 
+import libvirt
 from fastapi import APIRouter, HTTPException
 
 from api import schemas
@@ -141,3 +142,32 @@ def console(name: str) -> dict:
     except ValueError as exc:
         raise _map_error(exc)
     return {"vnc_port": port}
+
+
+@router.get("/{name}/stats", response_model=schemas.VMStats)
+def vm_stats(name: str) -> schemas.VMStats:
+    """Return a two-sample CPU% and RAM% for a running VM."""
+    try:
+        with libvirt_service.connection() as conn:
+            domain = libvirt_service.get_domain(conn, name)
+            cpu_percent = vm_service.sample_cpu_percent(conn, name, interval=0.5)
+
+            ram_percent: float | None = None
+            ram_used_mb: int | None = None
+            try:
+                info = domain.info()
+                max_mem_kb: int = info[1]
+                mem_kb: int = info[2]
+                if max_mem_kb and max_mem_kb > 0:
+                    ram_percent = round((mem_kb / max_mem_kb) * 100.0, 1)
+                ram_used_mb = mem_kb // 1024
+            except (libvirt.libvirtError, Exception):
+                pass
+    except ValueError as exc:
+        raise _map_error(exc)
+
+    return schemas.VMStats(
+        cpu_percent=cpu_percent,
+        ram_percent=ram_percent,
+        ram_used_mb=ram_used_mb,
+    )

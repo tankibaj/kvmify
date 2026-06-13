@@ -195,3 +195,49 @@ class ProvisionResult(BaseModel):
     network: str
     ip_mode: str
     message: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+class SnapshotInfo(BaseModel):
+    """Information about a single domain snapshot."""
+
+    name: str
+    created: Optional[str] = None
+    description: Optional[str] = None
+    state: Optional[str] = None
+    is_current: bool = False
+
+
+class SnapshotCreate(BaseModel):
+    """Request body for POST /vms/{name}/snapshots."""
+
+    name: str
+    description: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Host Stats
+# ---------------------------------------------------------------------------
+
+class HostStats(BaseModel):
+    """Host-level resource utilisation percentages."""
+
+    cpu_percent: float
+    ram_percent: float
+    disk_percent: float
+    pool_percent: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# VM Stats
+# ---------------------------------------------------------------------------
+
+class VMStats(BaseModel):
+    """Per-VM CPU and RAM utilisation."""
+
+    cpu_percent: Optional[float] = None
+    ram_percent: Optional[float] = None
+    ram_used_mb: Optional[int] = None
