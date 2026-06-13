@@ -44,7 +44,7 @@ export function useVMStats(name) {
   return useQuery({
     queryKey: ['vm-stats', name],
     queryFn: () => apiFetch(`/vms/${name}/stats`),
-    refetchInterval: 3000,
+    refetchInterval: 1000,
     enabled: !!name,
   })
 }

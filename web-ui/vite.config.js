@@ -4,6 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // @novnc/novnc uses top-level await; esnext target supports it.
+    target: 'esnext',
+  },
   server: {
     proxy: {
       '/api': {
