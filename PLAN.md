@@ -35,11 +35,15 @@ Host discovery on `naim@192.168.178.101` (Ubuntu 22.04.5, libvirt 8.0.0,
 QEMU 6.2.0, Python 3.10.12) found facts that supersede the assumptions written
 later in this document. Where they conflict, **these win**:
 
-1. **Storage paths.** `/var/lib/libvirt/images/{base,vms}` do NOT exist. Use the
-   existing dir pool instead:
-   - Base images → `/mnt/nvme1/kvm/pool/base/`
-   - VM disks    → `/mnt/nvme1/kvm/pool/vms/`
-   (libvirt pool `default` = dir pool at `/mnt/nvme1/kvm/pool`, ~486 GB free.)
+1. **Storage paths & pools.** `/var/lib/libvirt/images/{base,vms}` do NOT exist.
+   Storage is managed as first-class **libvirt storage pools** (see the Storage
+   Pools section), not hardcoded paths:
+   - Base images → fixed, pool-independent dir `/mnt/nvme1/kvm/pool/base/`
+     (read-only bases; not affected by which pool is default).
+   - VM disks → created in the **selected storage pool** at provision time,
+     defaulting to the KVMify *default pool* when the user doesn't choose one.
+   - Seed pool: libvirt pool `default` = dir pool at `/mnt/nvme1/kvm/pool`
+     (~486 GB free) is the initial default pool.
 2. **libvirt URI.** Backend must open `qemu:///system` EXPLICITLY (shell default
    is `qemu:///session`, which is empty). Confirm `naim` ∈ `libvirt` group.
 3. **Network names** (libvirt net name → UI label → virt-install flag):
@@ -134,11 +138,14 @@ Physical Ubuntu KVM Host
 │   │   ├── vms.py
 │   │   ├── snapshots.py
 │   │   ├── networks.py
+│   │   ├── pools.py
 │   │   └── console.py
 │   ├── services/
 │   │   ├── libvirt_service.py
 │   │   ├── cloudinit_service.py
 │   │   ├── network_service.py
+│   │   ├── pool_service.py
+│   │   ├── settings_service.py     # persists default_pool to kvmify-settings.json
 │   │   └── snapshot_service.py
 │   └── templates/
 │       ├── user-data.yaml.j2
@@ -159,6 +166,7 @@ Physical Ubuntu KVM Host
 │       │   ├── Dashboard.jsx
 │       │   ├── Provision.jsx
 │       │   ├── VMDetail.jsx
+│       │   ├── Pools.jsx
 │       │   └── Images.jsx
 │       └── components/
 │           ├── layout/
@@ -233,7 +241,7 @@ Physical Ubuntu KVM Host
 
 **Sidebar:**
 - Logo + "KVMify" wordmark
-- Nav links: Dashboard, Images, Provision
+- Nav links: Dashboard, Images, Pools, Provision
 - Bottom section: live host stats
   - CPU usage %
   - RAM usage %
@@ -270,6 +278,9 @@ Physical Ubuntu KVM Host
 - CPU — slider: 1 / 2 / 4 / 8 vCPUs
 - RAM — slider: 512MB / 1GB / 2GB / 4GB / 8GB
 - Disk — slider: 10GB / 20GB / 50GB / 100GB
+- Storage Pool — dropdown (populated via GET /pools)
+  - Default pool pre-selected (badge: "Default"); shows free space per pool
+  - Disk slider max is clamped to the selected pool's available space
 
 **Section: Network**
 - Network Interface — dropdown (populated via GET /api/networks)
@@ -296,6 +307,7 @@ OS:          Ubuntu 24.04 LTS
 CPU:         2 vCPUs
 RAM:         2 GB
 Disk:        20 GB
+Pool:        default (/mnt/nvme1/kvm/pool)
 Network:     br0 (Bridge)
 IP:          DHCP  |  or  192.168.1.100 (Static)
 ```
@@ -364,7 +376,17 @@ ssh ubuntu@192.168.x.x
 
 ---
 
-### 4. Images Page (/images)
+### 4. Storage Pools Page (/pools)
+- Table columns: Name / State (active/inactive dot) / Type / Capacity / Used / Available (usage bar) / Autostart / Default badge
+- "Create Pool" button → modal: Name + Target Path, validates path, creates dir pool
+- Per-row actions dropdown: Set as Default, Start / Stop, Toggle Autostart, Delete
+  - Delete shows confirmation modal; blocked with a clear message if pool holds VM disks (offer force only when empty-after-review); the default pool's Delete is disabled
+- Live capacity bars (green < 75%, amber < 90%, rose ≥ 90%)
+- Polling: React Query refetchInterval (10s)
+
+---
+
+### 5. Images Page (/images)
 - Table columns: Ubuntu Version / Codename / Size / Last Updated / Checksum / Status
 - Status badge: Up to date (green) / Outdated (amber) / Missing (red)
 - "Sync All" button → calls POST /api/images/sync, streams log output in terminal UI
@@ -400,6 +422,21 @@ Stored in React state (useState), not persisted, session only.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | /networks | List available libvirt networks (br0, default, macvtap) |
+
+### Storage Pools
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /pools | List pools: name, state, type, capacity/allocation/available bytes, autostart, target path, is_default |
+| POST | /pools | Create + start a dir pool `{ name, path }` (define → build → start → autostart on) |
+| DELETE | /pools/{name} | Stop + undefine a pool. Refuse if it contains volumes unless `?force=true`. Never deletes the seed `default` pool. |
+| PATCH | /pools/{name} | Lifecycle: `{ action: "start" | "stop" | "refresh", autostart?: bool }` |
+| POST | /pools/{name}/default | Mark this pool as the KVMify default provisioning pool (persisted) |
+
+**Default-pool persistence:** KVMify stores its app settings (currently just
+`default_pool`) in `/home/naim/kvmify/api/kvmify-settings.json`. On first run it
+seeds `default_pool` to the libvirt pool named `default`. The provision endpoint
+resolves the target pool as: request `storage_pool` → else `default_pool` setting
+→ else pool named `default`. Deleting the current default pool is rejected.
 
 ### Images
 | Method | Endpoint | Description |
@@ -437,10 +474,14 @@ Stored in React state (useState), not persisted, session only.
 ```
 POST /vms/provision
 { vm_name, ubuntu_version, cpu, ram_mb, disk_gb, ssh_public_key,
-  network, ip_mode, static_ip, subnet_mask, gateway, dns }
+  network, ip_mode, static_ip, subnet_mask, gateway, dns,
+  storage_pool }   # optional — falls back to the KVMify default pool
     │
-    ├── 1. validate: name unique, base image exists, static IP not in use
-    ├── 2. qemu-img create -f qcow2 -b <base>.img -F qcow2 <vm>.qcow2 <disk>G
+    ├── 0. resolve pool: storage_pool → default_pool setting → pool "default";
+    │       disk path = <pool target path>/<vm_name>.qcow2
+    ├── 1. validate: name unique, base image exists, static IP not in use,
+    │       pool exists + active + has capacity for disk_gb
+    ├── 2. qemu-img create -f qcow2 -b <base>.img -F qcow2 <pool>/<vm>.qcow2 <disk>G
     ├── 3. render cloud-init user-data.yaml via Jinja2
     ├── 4. if ip_mode == static:
     │       render network-config.yaml (cloud-init v2 format)
@@ -626,31 +667,33 @@ same step as the feature they cover, and a step is not done until its tests pass
 | 1 | 4 | Sync all 3 Ubuntu base images | focal, jammy, noble |
 | 2 | 5 | Scaffold FastAPI project + venv | /home/naim/kvmify/api/ |
 | 2 | 6 | Backend: networks router | list libvirt networks (br0, default, macvtap) |
+| 2 | 6b | Backend: pools router + settings service | list/create/delete/lifecycle pools, default-pool persistence (kvmify-settings.json) |
 | 2 | 7 | Backend: images router | list, sync, sync status |
-| 2 | 8 | Backend: vms router | provision (with network + IP), lifecycle, resize, stats |
+| 2 | 8 | Backend: vms router | provision (with network + IP + **pool resolution**), lifecycle, resize, stats |
 | 2 | 9 | Backend: network update endpoint | PATCH /vms/{name}/network |
 | 2 | 10 | Backend: snapshots router | list, take, restore, delete |
 | 2 | 11 | Backend: console endpoint | VNC port lookup |
 | 2 | 12 | Backend: host stats endpoint | CPU, RAM, disk |
 | 2 | 13 | systemd service for FastAPI | enable + start |
-| 2 | 14 | Backend automated test suite | pytest + httpx, libvirt/subprocess/fs mocked; routers + services; must pass |
+| 2 | 14 | Backend automated test suite | pytest + httpx, libvirt/subprocess/fs mocked; routers (incl. pools) + services (incl. pool resolution + default-pool persistence); must pass |
 | 2 | 14b | Test all endpoints via /docs | manual smoke check before building UI |
 | 3 | 15 | Scaffold React 18 + Vite + Tailwind v4 | /home/naim/kvmify/web-ui/ |
 | 3 | 16 | Design system setup | @theme tokens, Inter + JetBrains Mono fonts |
 | 3 | 17 | Layout: Sidebar + TopBar | dark theme, nav, host stats |
 | 3 | 18 | Dashboard: VMTable + stats bar | polling every 5s |
 | 3 | 19 | NetworkConfig component | reusable: interface dropdown + DHCP/Static toggle |
-| 3 | 20 | Provision page: form + progress steps | sliders, network section, SSH key, live summary |
+| 3 | 20 | Provision page: form + progress steps | sliders, **storage pool dropdown**, network section, SSH key, live summary |
 | 3 | 21 | VM Detail: Overview tab + sparklines | Recharts CPU/RAM, network info |
 | 3 | 22 | VM Detail: Console tab | noVNC embed via @novnc/novnc |
 | 3 | 23 | VM Detail: Snapshots tab | list, take, restore, delete |
 | 3 | 24 | VM Detail: Network tab | interface + IP update form |
 | 3 | 25 | VM Detail: Resize tab | sliders + warnings |
 | 3 | 26 | Images page | table, sync button, log output |
-| 3 | 27 | Notification toast system | React state, auto-dismiss |
+| 3 | 26b | Pools page | table, capacity bars, create modal, lifecycle actions, set-default |
+| 3 | 27 | Notification toast system | React state, auto-dismiss (incl. pool create/delete/default events) |
 | 3 | 27b | Frontend automated test suite | Vitest + RTL; NetworkConfig, form validation, API client (mocked); must pass |
 | 4 | 28 | Nginx config + deploy React build | /var/www/kvmify/ |
-| 4 | 28b | Playwright E2E suite + MCP verification | web-ui/e2e/; dashboard, provision (bridge+DHCP, bridge+static), lifecycle, snapshots, network update, images sync; verify each flow via Playwright MCP server first |
+| 4 | 28b | Playwright E2E suite + MCP verification | web-ui/e2e/; dashboard, provision (bridge+DHCP, bridge+static, **pool selection**), lifecycle, snapshots, network update, images sync, **pool create/set-default/delete**; verify each flow via Playwright MCP server first |
 | 4 | 29 | noVNC + websockify systemd service | port 6080 |
 | 4 | 30 | Create scripts/dev-deploy.sh | rsync local → host + build + restart |
 | 4 | 31 | Create scripts/prod-deploy.sh | git pull on host + build + restart |
