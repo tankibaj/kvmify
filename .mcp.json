@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--config",
+        "/Users/naim/Repos/kvmify/playwright-mcp-config.json"
+      ]
+    }
+  }
+}
