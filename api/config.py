@@ -16,3 +16,18 @@ SETTINGS_PATH: str = os.getenv(
 SYNC_SCRIPT: str = os.getenv(
     "KVMIFY_SYNC_SCRIPT", "/usr/local/bin/sync-base-images.sh"
 )
+
+# Path to the image-sync status JSON file (written by trigger_sync, read by get_sync_status)
+_SETTINGS_DIR: str = os.path.dirname(
+    os.getenv("KVMIFY_SETTINGS", "/home/naim/kvmify/api/kvmify-settings.json")
+)
+IMAGE_SYNC_STATUS_PATH: str = os.getenv(
+    "KVMIFY_IMAGE_SYNC_STATUS",
+    os.path.join(_SETTINGS_DIR, "image-sync-status.json"),
+)
+
+# Path to the per-image sha256 cache JSON file
+IMAGE_CACHE_PATH: str = os.getenv(
+    "KVMIFY_IMAGE_CACHE",
+    os.path.join(_SETTINGS_DIR, "image-sha256-cache.json"),
+)

@@ -63,3 +63,40 @@ class PoolAction(BaseModel):
     autostart: Optional[bool] = Field(
         None, description="Set or clear autostart flag"
     )
+
+
+# ---------------------------------------------------------------------------
+# Base Images
+# ---------------------------------------------------------------------------
+
+class ImageInfo(BaseModel):
+    """Runtime information about a locally cached Ubuntu base image."""
+
+    version: str = Field(..., description="Short version key: '2004', '2204', or '2404'")
+    codename: str = Field(..., description="Ubuntu codename: focal, jammy, or noble")
+    label: str = Field(..., description="Human-readable label, e.g. 'Ubuntu 22.04 LTS'")
+    status: Literal["up_to_date", "outdated", "missing", "unknown"] = Field(
+        ..., description="Sync status relative to upstream cloud image"
+    )
+    size: Optional[int] = Field(None, description="Local file size in bytes")
+    last_updated: Optional[str] = Field(None, description="ISO-8601 mtime of local file")
+    checksum: Optional[str] = Field(None, description="SHA-256 hex digest of local file")
+
+
+class SyncRequest(BaseModel):
+    """Request body for POST /images/sync."""
+
+    version: Optional[str] = Field(
+        None, description="Version to sync: '2004', '2204', or '2404'. Omit to sync all."
+    )
+
+
+class SyncStatus(BaseModel):
+    """Current or last-known status of the background sync process."""
+
+    state: str = Field(..., description="One of: idle, running, finished, failed")
+    version: Optional[str] = Field(None, description="Version passed to trigger_sync")
+    started_at: Optional[str] = Field(None, description="ISO-8601 timestamp when sync started")
+    finished_at: Optional[str] = Field(None, description="ISO-8601 timestamp when sync finished")
+    returncode: Optional[int] = Field(None, description="Exit code of the sync script")
+    log: Optional[str] = Field(None, description="Captured stdout/stderr from the sync script")
