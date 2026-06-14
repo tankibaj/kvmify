@@ -105,17 +105,30 @@ def _disk_gb_from_xml(xml_desc: str) -> Optional[int]:
 
 
 def _best_ip(domain: libvirt.virDomain) -> Optional[str]:
-    """Best-effort IP extraction via DHCP lease source."""
-    try:
-        ifaces = domain.interfaceAddresses(
-            libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE, 0
-        )
-        for _iface, data in ifaces.items():
+    """Best-effort IPv4 extraction across multiple libvirt sources.
+
+    NAT networks expose a DHCP lease (LEASE); bridge/macvtap VMs are leased by
+    the LAN router, not libvirt, so their address is only discoverable from the
+    host ARP table (ARP, once the VM has sent traffic) or the guest agent
+    (AGENT, if installed). Try each in turn.
+    """
+    sources = (
+        libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE,
+        libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_ARP,
+        libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT,
+    )
+    for source in sources:
+        try:
+            ifaces = domain.interfaceAddresses(source, 0)
+        except (libvirt.libvirtError, Exception):
+            continue
+        for _iface, data in (ifaces or {}).items():
             for addr in data.get("addrs", []):
-                if addr.get("type") == libvirt.VIR_IP_ADDR_TYPE_IPV4:
-                    return addr["addr"]
-    except (libvirt.libvirtError, Exception):
-        pass
+                ip = addr.get("addr", "")
+                if addr.get("type") == libvirt.VIR_IP_ADDR_TYPE_IPV4 and not ip.startswith(
+                    "127."
+                ):
+                    return ip
     return None
 
 
@@ -448,6 +461,12 @@ def delete_vm(conn: libvirt.virConnect, name: str) -> None:
             vol.delete(0)
         except (libvirt.libvirtError, Exception):
             pass  # best-effort; volume may already be gone
+
+    # Remove any stale noVNC console token for this VM
+    try:
+        os.remove(os.path.join(config.NOVNC_TOKEN_DIR, name))
+    except OSError:
+        pass  # no token registered / already gone
 
 
 # ---------------------------------------------------------------------------
