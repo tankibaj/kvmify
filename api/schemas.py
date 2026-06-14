@@ -111,7 +111,22 @@ class ProvisionRequest(BaseModel):
     """Request body for POST /vms/provision."""
 
     vm_name: str = Field(..., description="VM name: lowercase letters, digits, and hyphens, max 32 chars")
-    ubuntu_version: Literal["2004", "2204", "2404"] = Field(..., description="Ubuntu version to provision")
+    ubuntu_version: Optional[str] = Field(
+        None,
+        description="Ubuntu version key or custom image id (required when source_type is 'base_image'; ignored for templates)",
+    )
+
+    @field_validator("ubuntu_version")
+    @classmethod
+    def validate_ubuntu_version(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v  # absent is allowed for source_type='template'; cross-checked in validate_template_fields
+        import re as _re
+        if not _re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", v):
+            raise ValueError(
+                "ubuntu_version must be a valid image key: lowercase letters, digits, hyphens, max 64 chars"
+            )
+        return v
     cpu: int = Field(..., ge=1, le=32, description="Number of vCPUs (1-32)")
     ram_mb: int = Field(..., ge=512, le=524288, description="RAM in MB (512-524288)")
     disk_gb: int = Field(..., ge=5, le=2000, description="Disk size in GB (5-2000)")
@@ -153,6 +168,9 @@ class ProvisionRequest(BaseModel):
         if self.source_type == "template":
             if not self.template_name or not self.template_name.strip():
                 raise ValueError("template_name is required when source_type is 'template'")
+        elif self.source_type == "base_image":
+            if not self.ubuntu_version or not self.ubuntu_version.strip():
+                raise ValueError("ubuntu_version is required when source_type is 'base_image'")
         return self
 
 
