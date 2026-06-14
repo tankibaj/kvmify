@@ -15,6 +15,11 @@ dist/
 *.qcow2
 *.img
 
+# KVMify runtime state (host-local, never committed)
+api/kvmify-settings.json
+api/image-sync-status.json
+api/image-sha256-cache.json
+
 # Editor / OS
 .DS_Store
 .vscode/

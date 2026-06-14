@@ -1,0 +1,4 @@
+# /etc/cron.d/kvmify-image-sync
+# Weekly checksum-based sync of Ubuntu base images (Sunday 02:00).
+# Downloads only when upstream SHA256 differs from the local copy.
+0 2 * * 0 root /usr/local/bin/sync-base-images.sh >> /var/log/vm-image-sync.log 2>&1
