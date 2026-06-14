@@ -97,6 +97,32 @@ def _first_disk_target(xml_desc: str) -> Optional[str]:
     return None
 
 
+def _first_disk_source_path(xml_desc: str, conn: libvirt.virConnect) -> Optional[str]:
+    """Resolve the source path of the first non-cdrom disk (file/block/volume)."""
+    try:
+        root = ET.fromstring(xml_desc)
+    except ET.ParseError:
+        return None
+    for disk in root.findall("./devices/disk"):
+        if disk.get("device") == "cdrom":
+            continue
+        source = disk.find("source")
+        if source is None:
+            continue
+        dtype = disk.get("type")
+        if dtype == "file" and source.get("file"):
+            return source.get("file")
+        if dtype == "block" and source.get("dev"):
+            return source.get("dev")
+        if dtype == "volume" and source.get("pool") and source.get("volume"):
+            try:
+                pool = conn.storagePoolLookupByName(source.get("pool"))
+                return pool.storageVolLookupByName(source.get("volume")).path()
+            except libvirt.libvirtError:
+                return None
+    return None
+
+
 def _disk_gb_from_xml(xml_desc: str) -> Optional[int]:
     """Extract disk capacity in GB from the first disk element (best-effort)."""
     # We can't get actual capacity from XML alone without a pool vol lookup;
@@ -532,6 +558,13 @@ def resize_vm(
 
     if req.cpu is not None:
         try:
+            # Raise the configured MAXIMUM first, then the current count —
+            # otherwise growing beyond the VM's original max vCPUs is rejected
+            # ("requested vcpus is greater than max allowable vcpus").
+            domain.setVcpusFlags(
+                req.cpu,
+                libvirt.VIR_DOMAIN_AFFECT_CONFIG | libvirt.VIR_DOMAIN_VCPU_MAXIMUM,
+            )
             domain.setVcpusFlags(
                 req.cpu,
                 libvirt.VIR_DOMAIN_AFFECT_CONFIG,
@@ -557,19 +590,44 @@ def resize_vm(
 
     if req.disk_gb is not None:
         xml_desc = domain.XMLDesc(0)
-        target_dev = _first_disk_target(xml_desc)
-        if target_dev is None:
-            raise ValueError("No disk target device found in domain XML")
         new_bytes = req.disk_gb * 1024 ** 3
-        try:
-            domain.blockResize(
-                target_dev,
-                new_bytes,
-                libvirt.VIR_DOMAIN_BLOCK_RESIZE_BYTES,
+
+        # Determine current disk capacity from the backing storage volume.
+        path = _first_disk_source_path(xml_desc, conn)
+        vol = None
+        cur_bytes = None
+        if path is not None:
+            try:
+                vol = conn.storageVolLookupByPath(path)
+                cur_bytes = vol.info()[1]  # [type, capacity, allocation]
+            except libvirt.libvirtError:
+                vol = None
+
+        if cur_bytes is not None and new_bytes == cur_bytes:
+            pass  # no change requested — skip (blockResize would fail on a stopped VM)
+        elif cur_bytes is not None and new_bytes < cur_bytes:
+            raise ValueError(
+                f"Disk can only be grown; current size is "
+                f"{cur_bytes // 1024 ** 3} GB"
             )
-            changes.append(f"disk_gb={req.disk_gb}")
-        except libvirt.libvirtError as exc:
-            raise ValueError(f"Failed to resize disk: {exc}") from exc
+        else:
+            # Grow: online (blockResize, guest sees it live) when running,
+            # offline (volume resize) when the VM is stopped.
+            try:
+                if is_running:
+                    target_dev = _first_disk_target(xml_desc)
+                    if target_dev is None:
+                        raise ValueError("No disk target device found in domain XML")
+                    domain.blockResize(
+                        target_dev, new_bytes, libvirt.VIR_DOMAIN_BLOCK_RESIZE_BYTES
+                    )
+                elif vol is not None:
+                    vol.resize(new_bytes)
+                else:
+                    raise ValueError("Cannot resize disk: backing volume not found")
+                changes.append(f"disk_gb={req.disk_gb}")
+            except libvirt.libvirtError as exc:
+                raise ValueError(f"Failed to resize disk: {exc}") from exc
 
     return {"message": f"Resize applied: {', '.join(changes) or 'no changes'}"}
 

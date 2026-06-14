@@ -688,9 +688,48 @@ def test_resize_cpu_ram_on_stopped_vm_succeeds(
 
     resp = client.patch("/vms/stopped-vm/resize", json={"cpu": 4, "ram_mb": 4096})
     assert resp.status_code == 200
-    domain.setVcpusFlags.assert_called_once_with(4, libvirt.VIR_DOMAIN_AFFECT_CONFIG)
+    # setVcpusFlags called twice (max + current) so growing past the original max works
+    assert domain.setVcpusFlags.call_count == 2
+    domain.setVcpusFlags.assert_any_call(
+        4, libvirt.VIR_DOMAIN_AFFECT_CONFIG | libvirt.VIR_DOMAIN_VCPU_MAXIMUM
+    )
+    domain.setVcpusFlags.assert_any_call(4, libvirt.VIR_DOMAIN_AFFECT_CONFIG)
     # setMemoryFlags called twice (max + current)
     assert domain.setMemoryFlags.call_count == 2
+
+
+def test_resize_cpu_ram_with_disk_on_stopped_vm_succeeds(
+    client: TestClient, patch_libvirt, mock_conn
+):
+    """Regression: the UI sends cpu+ram+disk together. On a STOPPED VM the disk
+    step must NOT call blockResize (which needs a running domain). An unchanged
+    disk size is a no-op; CPU/RAM apply via CONFIG."""
+    domain = _make_mock_domain("stopped-vm", state=libvirt.VIR_DOMAIN_SHUTOFF)
+    mock_conn.lookupByName.return_value = domain
+
+    # disk_gb=20 matches the mock volume's 20 GiB capacity → no-op.
+    resp = client.patch(
+        "/vms/stopped-vm/resize", json={"cpu": 4, "ram_mb": 4096, "disk_gb": 20}
+    )
+    assert resp.status_code == 200
+    domain.setVcpusFlags.assert_called()
+    domain.blockResize.assert_not_called()
+
+
+def test_resize_disk_grow_on_stopped_vm_uses_volume_resize(
+    client: TestClient, patch_libvirt, mock_conn
+):
+    """Growing the disk on a STOPPED VM resizes the storage volume offline
+    (not blockResize)."""
+    domain = _make_mock_domain("stopped-vm", state=libvirt.VIR_DOMAIN_SHUTOFF)
+    mock_conn.lookupByName.return_value = domain
+
+    resp = client.patch("/vms/stopped-vm/resize", json={"disk_gb": 50})
+    assert resp.status_code == 200
+    mock_conn.storageVolLookupByPath.return_value.resize.assert_called_once_with(
+        50 * 1024 ** 3
+    )
+    domain.blockResize.assert_not_called()
 
 
 def test_resize_disk_on_running_vm_succeeds(

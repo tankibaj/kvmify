@@ -59,6 +59,12 @@ def make_mock_conn() -> MagicMock:
     conn.listAllStoragePools = MagicMock(return_value=[])
     conn.storagePoolLookupByName = MagicMock(side_effect=Exception("pool not found"))
     conn.storagePoolDefineXML = MagicMock()
+    # Disk-resize path: a volume whose current capacity is 20 GiB, so a grow
+    # request triggers the resize and a same-size request is a no-op.
+    _vol = MagicMock(name="virStorageVol")
+    _vol.info = MagicMock(return_value=[0, 20 * 1024 ** 3, 10 * 1024 ** 3])
+    _vol.resize = MagicMock(return_value=0)
+    conn.storageVolLookupByPath = MagicMock(return_value=_vol)
     return conn
 
 
