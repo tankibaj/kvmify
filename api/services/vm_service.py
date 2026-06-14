@@ -5,6 +5,7 @@ functions and maps exceptions to HTTPException.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -19,6 +20,7 @@ import libvirt
 from api import config, schemas
 from api.services import (
     cloudinit_service,
+    image_service,
     libvirt_service,
     network_service,
     pool_service,
@@ -152,13 +154,19 @@ def _best_ip(domain: libvirt.virDomain) -> Optional[str]:
 
     NAT networks expose a DHCP lease (LEASE); bridge/macvtap VMs are leased by
     the LAN router, not libvirt, so their address is only discoverable from the
-    host ARP table (ARP, once the VM has sent traffic) or the guest agent
-    (AGENT, if installed). Try each in turn.
+    host ARP table (ARP, once the VM has sent traffic). Try each in turn.
+
+    The guest-agent source (SRC_AGENT) is deliberately NOT used: KVMify's
+    ``virt-install`` configures no ``org.qemu.guest_agent.0`` channel, so the
+    agent can never respond. Querying it only produced a failing libvirt call on
+    *every* IP lookup — i.e. once per VM in list_vms and every 3s throughout the
+    up-to-120s provision IP-poll — flooding the journal with "Guest agent is not
+    responding" and adding latency to listing/provisioning. (Re-add SRC_AGENT
+    here only if a guest-agent channel is ever added to provision-vm.sh.)
     """
     sources = (
         libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE,
         libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_ARP,
-        libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT,
     )
     for source in sources:
         try:
@@ -176,15 +184,87 @@ def _best_ip(domain: libvirt.virDomain) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Uptime / OS variant / autostart helpers
+# ---------------------------------------------------------------------------
+
+def _qemu_pid_map() -> dict[str, int]:
+    """Map domain name → QEMU host PID by scanning processes (best-effort).
+
+    libvirt exposes no domain start time and the per-VM pidfile under
+    ``/run/libvirt/qemu`` is root-only, so we read the QEMU command line (which
+    is world-readable via ``/proc``).  QEMU is launched with
+    ``-name guest=<vm>,debug-threads=on`` — we parse that ``guest=`` token.
+    """
+    pid_map: dict[str, int] = {}
+    try:
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            for arg in proc.info.get("cmdline") or []:
+                if arg.startswith("guest="):
+                    pid_map[arg[len("guest="):].split(",", 1)[0]] = proc.info["pid"]
+                    break
+    except Exception:
+        pass
+    return pid_map
+
+
+def _uptime_from_pid(pid: Optional[int]) -> Optional[int]:
+    """Return seconds since the given QEMU process started, or None."""
+    if pid is None:
+        return None
+    try:
+        return int(time.time() - psutil.Process(pid).create_time())
+    except Exception:
+        return None
+
+
+def _autostart(domain: libvirt.virDomain) -> Optional[bool]:
+    """Return the domain's autostart flag (works for running and stopped)."""
+    try:
+        return bool(domain.autostart())
+    except (libvirt.libvirtError, Exception):
+        return None
+
+
+def _os_variant_sidecar(name: str) -> str:
+    """Path of the KVMify os-variant sidecar JSON for a VM (under SEED_DIR)."""
+    return os.path.join(config.SEED_DIR, f"{name}.json")
+
+
+def _write_os_variant(name: str, os_variant: str) -> None:
+    """Persist os_variant for a VM (best-effort; libvirt can't store it)."""
+    try:
+        os.makedirs(config.SEED_DIR, exist_ok=True)
+        with open(_os_variant_sidecar(name), "w") as fh:
+            json.dump({"os_variant": os_variant}, fh)
+    except OSError:
+        pass
+
+
+def _read_os_variant(name: str) -> Optional[str]:
+    """Read the os_variant KVMify persisted for a VM, or None.
+
+    libvirt does not store the ``virt-install --os-variant`` value queryably,
+    so ``provision`` writes a sidecar JSON which we read back here.
+    """
+    try:
+        with open(_os_variant_sidecar(name)) as fh:
+            return json.load(fh).get("os_variant")
+    except (OSError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # list_vms
 # ---------------------------------------------------------------------------
 
 def list_vms(conn: libvirt.virConnect) -> list[schemas.VMSummary]:
     """Return summary info for all domains."""
     domains = conn.listAllDomains(0)
+    pid_map = _qemu_pid_map()
     result: list[schemas.VMSummary] = []
     for domain in domains:
         xml_desc = domain.XMLDesc(0)
+        is_running = _state_str(domain) == "running"
         result.append(
             schemas.VMSummary(
                 name=domain.name(),
@@ -193,6 +273,9 @@ def list_vms(conn: libvirt.virConnect) -> list[schemas.VMSummary]:
                 ram_mb=domain.maxMemory() // 1024,
                 ip=_best_ip(domain),
                 network=_network_from_xml(xml_desc),
+                uptime=_uptime_from_pid(pid_map.get(domain.name())) if is_running else None,
+                os_variant=_read_os_variant(domain.name()),
+                autostart=_autostart(domain),
             )
         )
     return result
@@ -234,6 +317,11 @@ def get_vm(conn: libvirt.virConnect, name: str) -> schemas.VMDetail:
     except (libvirt.libvirtError, Exception):
         ram_used_mb = None
 
+    is_running = _state_str(domain) == "running"
+    uptime: Optional[int] = None
+    if is_running:
+        uptime = _uptime_from_pid(_qemu_pid_map().get(domain.name()))
+
     return schemas.VMDetail(
         name=domain.name(),
         state=_state_str(domain),
@@ -241,6 +329,9 @@ def get_vm(conn: libvirt.virConnect, name: str) -> schemas.VMDetail:
         ram_mb=domain.maxMemory() // 1024,
         ip=_best_ip(domain),
         network=_network_from_xml(xml_desc),
+        uptime=uptime,
+        os_variant=_read_os_variant(domain.name()),
+        autostart=_autostart(domain),
         cpu_percent=cpu_percent,
         ram_used_mb=ram_used_mb,
         ram_total_mb=domain.maxMemory() // 1024,
@@ -285,8 +376,7 @@ def provision(
         if not os.path.exists(base_img_path):
             raise ValueError(f"Template '{req.template_name}' not found at {base_img_path}")
     else:
-        base_img_name = config.BASE_IMAGE_NAMES[req.ubuntu_version]
-        base_img_path = os.path.join(config.BASE_IMAGE_DIR, base_img_name)
+        base_img_path, _resolved_os_variant = image_service.resolve_base_image(req.ubuntu_version)
         if not os.path.exists(base_img_path):
             raise ValueError(
                 f"Base image not found: {base_img_path}. "
@@ -352,7 +442,7 @@ def provision(
         except (FileNotFoundError, KeyError, ValueError, OSError):
             pass
     else:
-        os_variant = config.OS_VARIANTS[req.ubuntu_version]
+        _, os_variant = image_service.resolve_base_image(req.ubuntu_version)
 
     # 5. Build subprocess command
     cmd = [
@@ -390,6 +480,9 @@ def provision(
             pool.refresh(0)
         except libvirt.libvirtError:
             pass
+
+    # Persist os_variant — libvirt won't store it, but the UI wants to show it.
+    _write_os_variant(vm_name, os_variant)
 
     # 7. Poll for domain + IP (up to 120 s)
     ip: Optional[str] = None
@@ -466,6 +559,19 @@ def restart_vm(conn: libvirt.virConnect, name: str) -> None:
         raise ValueError(str(exc)) from exc
 
 
+def set_autostart(conn: libvirt.virConnect, name: str, autostart: bool) -> None:
+    """Set or clear the domain autostart flag (start on host boot).
+
+    Raises:
+        ValueError: if domain not found or libvirt call fails.
+    """
+    domain = libvirt_service.get_domain(conn, name)
+    try:
+        domain.setAutostart(1 if autostart else 0)
+    except libvirt.libvirtError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def delete_vm(conn: libvirt.virConnect, name: str) -> None:
     """Destroy (if running) then undefine a VM and delete its disk volumes.
 
@@ -503,6 +609,7 @@ def delete_vm(conn: libvirt.virConnect, name: str) -> None:
             flags = (
                 libvirt.VIR_DOMAIN_UNDEFINE_MANAGED_SAVE
                 | libvirt.VIR_DOMAIN_UNDEFINE_SNAPSHOTS_METADATA
+                | libvirt.VIR_DOMAIN_UNDEFINE_NVRAM
             )
         except AttributeError:
             flags = 0
@@ -513,13 +620,31 @@ def delete_vm(conn: libvirt.virConnect, name: str) -> None:
         except libvirt.libvirtError as exc:
             raise ValueError(str(exc)) from exc
 
-    # Delete volumes
+    # Delete volumes (main disk + cloud-init seed ISO, both attached as disks).
+    # Try the libvirt storage API first; fall back to a direct unlink for files
+    # that live outside any registered pool (e.g. the seed ISO).
     for vol_path in disk_paths:
         try:
             vol = conn.storageVolLookupByPath(vol_path)
             vol.delete(0)
         except (libvirt.libvirtError, Exception):
             pass  # best-effort; volume may already be gone
+        if isinstance(vol_path, str) and os.path.isabs(vol_path):
+            try:
+                os.remove(vol_path)
+            except OSError:
+                pass  # already removed by vol.delete, or never a plain file
+
+    # Remove cloud-init seed inputs and the os-variant sidecar in SEED_DIR.
+    for fname in (
+        f"{name}-user-data.yaml",
+        f"{name}-network-config.yaml",
+        f"{name}.json",
+    ):
+        try:
+            os.remove(os.path.join(config.SEED_DIR, fname))
+        except OSError:
+            pass  # never created / already gone
 
     # Remove any stale noVNC console token for this VM
     try:
