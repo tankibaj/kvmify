@@ -136,17 +136,20 @@ Physical Ubuntu KVM Host
 │   ├── routers/
 │   │   ├── images.py
 │   │   ├── vms.py
-│   │   ├── snapshots.py
+│   │   ├── snapshots.py            # gains POST /{snap}/export in Phase 5
 │   │   ├── networks.py
 │   │   ├── pools.py
-│   │   └── console.py
+│   │   ├── console.py
+│   │   └── templates.py            # Phase 5: GET /templates, DELETE /templates/{name}
 │   ├── services/
 │   │   ├── libvirt_service.py
 │   │   ├── cloudinit_service.py
 │   │   ├── network_service.py
 │   │   ├── pool_service.py
 │   │   ├── settings_service.py     # persists default_pool to kvmify-settings.json
-│   │   └── snapshot_service.py
+│   │   │                           # Phase 5: gains TEMPLATES_DIR + EXPORT_SCRIPT config keys
+│   │   ├── snapshot_service.py
+│   │   └── template_service.py     # Phase 5: export, list, delete templates
 │   └── templates/
 │       ├── user-data.yaml.j2
 │       └── network-config.yaml.j2
@@ -187,7 +190,8 @@ Physical Ubuntu KVM Host
 │
 └── scripts/
     ├── sync-base-images.sh
-    └── provision-vm.sh
+    ├── provision-vm.sh
+    └── export-vm-snapshot.sh       # Phase 5: privileged qemu-img convert helper (installed to /usr/local/bin/)
 ```
 
 ---
@@ -269,7 +273,10 @@ Physical Ubuntu KVM Host
 
 **Section: General**
 - VM Name — text input, validated: lowercase, hyphens only, max 32 chars
-- Ubuntu Version — dropdown
+- **Image Source** — selector with two options (Phase 5):
+  - ◉ **Ubuntu Base Image** (default) — shows the Ubuntu Version dropdown below
+  - ○ **From Template** — hides Ubuntu Version; shows a Template dropdown populated from `GET /api/templates` (displays template name + source info; empty state: "No templates available — export a snapshot first")
+- Ubuntu Version — dropdown (hidden when "From Template" is selected)
   - Ubuntu 20.04 LTS (Focal)
   - Ubuntu 22.04 LTS (Jammy)
   - Ubuntu 24.04 LTS (Noble)
@@ -353,11 +360,17 @@ ssh ubuntu@192.168.x.x
 
 **Snapshots tab:**
 - List: snapshot name, created date, description
-- Actions per snapshot: Restore / Delete (with confirmation modal)
+- Actions per snapshot: Restore / Delete (with confirmation modal) / **Export**
 - "Take Snapshot" button → modal:
   - Name (auto-filled: vm-name-YYYYMMDD-HHmm)
   - Description (optional)
   - Confirm button
+- **Export modal** (Phase 5 — triggered by "Export" action on a snapshot row):
+  - Title: "Export Snapshot to Template"
+  - Template Name field (validated: `^[a-z0-9][a-z0-9\-]{0,63}$`, inline error on invalid)
+  - Confirm button → calls `POST /api/vms/{name}/snapshots/{snap}/export`
+  - On success: green toast "Template '{name}' created" — modal closes
+  - On 409: inline error "A template with that name already exists"
 
 **Network tab:**
 - Current network config: interface, mode, IP, MAC address
@@ -393,6 +406,13 @@ ssh ubuntu@192.168.x.x
 - Per-row "Sync" button for individual version
 - Last sync timestamp shown per image
 
+**VM Templates section** (Phase 5 — below the base images table on the same page):
+- Section heading: "VM Templates"
+- Table columns: Name / Size / Created / Source (displayed as `{source_vm} @ {source_snapshot}`) / Actions
+- Actions column: Delete button → confirmation modal ("This may break VMs provisioned from this template. Proceed?") → calls `DELETE /api/templates/{name}` → 204 → row removed + red toast "Template '{name}' deleted"
+- Empty state: "No templates yet. Export a snapshot from a VM's Snapshots tab to create one."
+- Polling: React Query refetchInterval (30s, templates are infrequently updated)
+
 ---
 
 ## Notification System
@@ -404,6 +424,8 @@ Toast component (top-right, z-50):
 - VM deleted → "{name} deleted" — red
 - Snapshot taken → "Snapshot saved for {name}" — green
 - Snapshot restored → "{name} restored to {snapshot}" — amber
+- Template exported → "Template '{template}' created from {vm} @ {snapshot}" — green
+- Template deleted → "Template '{template}' deleted" — red
 - Network updated → "{name} network config updated, restart to apply" — amber
 - Any API error → error message — red
 
@@ -438,6 +460,92 @@ seeds `default_pool` to the libvirt pool named `default`. The provision endpoint
 resolves the target pool as: request `storage_pool` → else `default_pool` setting
 → else pool named `default`. Deleting the current default pool is rejected.
 
+---
+
+## Templates (Snapshot → Template Export)
+
+### Concept and Rationale
+
+KVMify has two independent snapshot primitives. They are intentionally kept separate:
+
+| | Internal Snapshots | Templates |
+|---|---|---|
+| **What it is** | In-place qcow2 internal snapshot | Standalone flat qcow2 image |
+| **Purpose** | Ephemeral rollback ("undo button") | Durable, portable, cloneable artifact |
+| **Coupling** | Coupled to the VM's disk — destroyed when the VM/disk is deleted | Independent — survives VM/disk/snapshot deletion |
+| **Analogue** | Git stash | Cloud AMI / OS image |
+| **Use case** | Quick save before a risky change | Freeze a known-good state; re-provision from it |
+
+The export operation converts an existing internal snapshot into a template. It does **not** modify or remove the source snapshot; both primitives continue to exist independently after the export.
+
+### Storage
+
+Templates live in a **dedicated directory** that is completely separate from the base-image directory so `sync-base-images.sh` never touches them:
+
+```
+/mnt/nvme1/kvm/pool/templates/          # KVMIFY_TEMPLATES_DIR
+├── my-golden-image.qcow2               # flat standalone image (no backing chain)
+├── my-golden-image.json                # sidecar metadata
+├── web-server-v2.qcow2
+└── web-server-v2.json
+```
+
+Configuration:
+- Config key: `TEMPLATES_DIR`
+- Environment variable: `KVMIFY_TEMPLATES_DIR` (overrides the default)
+- Default value: `/mnt/nvme1/kvm/pool/templates`
+
+Each template consists of two files:
+- **`<name>.qcow2`** — flat, self-contained image produced by `qemu-img convert` (no backing chain dependency).
+- **`<name>.json`** — sidecar metadata:
+  ```json
+  {
+    "name": "my-golden-image",
+    "source_vm": "sandbox",
+    "source_snapshot": "pre-deploy-20260601",
+    "os_variant": "ubuntu22.04",
+    "created": "2026-06-01T14:32:00Z"
+  }
+  ```
+
+**Template name rule:** `^[a-z0-9][a-z0-9\-]{0,63}$` — lowercase alphanumeric and hyphens, 1–64 characters, must start with alphanumeric.
+
+### Export Mechanics
+
+Because `qemu-img convert` requires root when the VM is running (to access the live disk safely), a scoped privileged helper script handles the conversion:
+
+**`scripts/export-vm-snapshot.sh`** (installed to `/usr/local/bin/export-vm-snapshot.sh`)
+
+- Invoked by the backend via `sudo /usr/local/bin/export-vm-snapshot.sh`
+- Sudoers grant: `naim ALL=(ALL) NOPASSWD: /usr/local/bin/export-vm-snapshot.sh` (scoped — only this script, not general sudo)
+- Runs: `qemu-img convert -U -O qcow2 -s <snapshot> <source_disk> <dest>`
+  - `-U` (unsafe mode) allows the export to proceed while the VM is powered on; the snapshot state is immutable so this is safe
+  - `-O qcow2` produces a flat, backing-chain-free output image
+  - `-s <snapshot>` selects the internal snapshot to flatten
+- After conversion, chowns the result to `naim:naim` so subsequent list and delete operations are unprivileged
+
+**Backend responsibilities:**
+1. Resolve the source disk path from the domain XML (first `<disk device="disk">` source)
+2. Invoke the helper script with `subprocess.run` (checked=True)
+3. Write the `.json` sidecar to `TEMPLATES_DIR`
+4. Return `TemplateInfo` to the caller
+
+### Provisioning from a Template
+
+`ProvisionRequest` gains two new optional fields (backwards-compatible — existing clients default to `base_image` behaviour):
+
+```python
+source_type: Literal["base_image", "template"] = "base_image"
+template_name: str | None = None   # required when source_type == "template"
+```
+
+When `source_type == "template"`:
+- The template `.qcow2` is used as the backing image in place of the Ubuntu base image — `provision-vm.sh` is unchanged; only the path argument changes
+- `ubuntu_version` is ignored; `os_variant` is read from the template's `.json` sidecar and passed to `virt-install`
+- All other provision fields (CPU, RAM, disk, network, IP, SSH key, storage pool) work identically
+
+**Known caveat (document prominently):** A template used as a backing image for provisioned VMs must persist for as long as those VMs exist. Deleting a template that has been used as a backing image will corrupt those VMs' disks — the same constraint that applies to base images. KVMify does not enforce this at delete time (no reverse index); it is the operator's responsibility.
+
 ### Images
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -466,6 +574,32 @@ resolves the target pool as: request `storage_pool` → else `default_pool` sett
 | POST | /vms/{name}/snapshots | Take snapshot |
 | POST | /vms/{name}/snapshots/{snap}/restore | Restore snapshot |
 | DELETE | /vms/{name}/snapshots/{snap} | Delete snapshot |
+| POST | /vms/{name}/snapshots/{snap}/export | Export snapshot to a template → 201 `TemplateInfo`. Body: `{ "template_name": str }`. Errors: 404 (VM or snapshot not found), 409 (template name already exists), 400 (invalid name format). |
+
+### Templates
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /templates | List all templates → `TemplateInfo[]` |
+| DELETE | /templates/{name} | Delete template — removes `<name>.qcow2` and `<name>.json` → 204. Returns 404 if not found. |
+
+**`TemplateInfo` shape:**
+```json
+{
+  "name": "my-golden-image",
+  "size": 2147483648,
+  "created": "2026-06-01T14:32:00Z",
+  "source_vm": "sandbox",
+  "source_snapshot": "pre-deploy-20260601",
+  "os_variant": "ubuntu22.04"
+}
+```
+(`size` is in bytes; `created` is ISO-8601 UTC.)
+
+**`ProvisionRequest` additions** (both fields optional; existing clients are unaffected):
+```python
+source_type: Literal["base_image", "template"] = "base_image"
+template_name: str | None = None   # required when source_type == "template"
+```
 
 ---
 
@@ -699,6 +833,13 @@ same step as the feature they cover, and a step is not done until its tests pass
 | 4 | 31 | Create scripts/prod-deploy.sh | git pull on host + build + restart |
 | 4 | 32 | End-to-end test | provision (bridge+static) → console → snapshot → network update |
 | 4 | 33 | Weekly cron for image sync | /etc/cron.d/kvmify-image-sync |
+| **5** | **34** | **Config + schemas** | Add `TEMPLATES_DIR` + `EXPORT_SCRIPT` to config/settings. Add `TemplateInfo` Pydantic model. Extend `ProvisionRequest` with `source_type` (default `"base_image"`) and `template_name` (optional). |
+| 5 | 35 | template_service + disk-path helper + export script | `api/services/template_service.py`: `export_snapshot()` (resolve disk path from domain XML, invoke sudo helper, write `.json` sidecar), `list_templates()`, `delete_template()`. `scripts/export-vm-snapshot.sh`: `qemu-img convert -U -O qcow2 -s <snap> <src> <dest>` + chown. |
+| 5 | 36 | templates router + export route + main.py wiring | `api/routers/templates.py`: `GET /templates`, `DELETE /templates/{name}`. Add `POST /vms/{name}/snapshots/{snap}/export` to `api/routers/snapshots.py`. Register both in `main.py`. |
+| 5 | 37 | Provision template-source integration | In `libvirt_service.py` / provision flow: when `source_type == "template"`, resolve `template_name` → `.qcow2` path and read `os_variant` from `.json` sidecar; pass as backing image and os_variant to `provision-vm.sh`. No changes to `provision-vm.sh` itself. |
+| 5 | 38 | Frontend: client hooks + SnapshotList export modal + Images templates section + ProvisionForm source selector | `api/client.js`: add `exportSnapshot()`, `listTemplates()`, `deleteTemplate()` hooks. `SnapshotList.jsx`: add Export action + export modal (template name input, validation, 409 handling). `Images.jsx`: add VM Templates table section with delete confirmation. `ProvisionForm.jsx`: add Image Source radio (Base Image / From Template) + Template dropdown (populated from `listTemplates`). |
+| 5 | 39 | Tests | **pytest** `tests/test_templates.py`: export success, duplicate name (409), missing snapshot (404), invalid name (400), list, delete — libvirt + subprocess + fs mocked. Provision-from-template test: `source_type="template"` resolves sidecar + passes correct backing path. **Vitest**: export modal (open, validation, success, 409), VM Templates section render + delete confirmation, ProvisionForm source selector toggle. **Playwright E2E** (non-destructive): VM Templates section renders on `/images`; export modal opens and cancels on existing `sandbox` VM snapshot; provision source toggle shows/hides Template dropdown. All tests must pass before proceeding. |
+| 5 | 40 | Host setup + smoke test | On host: `mkdir -p /mnt/nvme1/kvm/pool/templates`. Install `export-vm-snapshot.sh` to `/usr/local/bin/`, chmod 755. Add sudoers grant: `naim ALL=(ALL) NOPASSWD: /usr/local/bin/export-vm-snapshot.sh`. Run `dev-deploy.sh`. Live smoke test: export a snapshot from `sandbox` → verify template appears in `/images` → provision a new VM from it → confirm VM starts. |
 
 ---
 
@@ -752,3 +893,46 @@ Must:
 - Static IP injected via cloud-init network-config v2 (not DHCP reservation)
 - NetworkConfig.jsx is a shared component used in both ProvisionForm and VM Detail Network tab
 - Network changes on existing VMs require restart to take effect (shown as warning in UI)
+
+---
+
+## Testing
+
+Tests are written in the same step as the feature they cover. A step is not done until its tests pass. Both deploy scripts (`dev-deploy.sh`, `prod-deploy.sh`) run the full suite and abort on any failure.
+
+### Backend (pytest)
+
+Run: `cd api && source venv/bin/activate && pytest`
+
+- `tests/test_routers.py` — request/response contracts, validation, and error paths for all routers (networks, pools, images, vms, snapshots, console, host stats). Libvirt, subprocess, and filesystem calls are mocked.
+- `tests/test_services.py` — provision pipeline (pool resolution, cloud-init rendering, subnet-mask-to-prefix conversion, network-flag resolution), default-pool persistence, network update flow.
+- `tests/test_templates.py` *(Phase 5)* — export success (mocked subprocess + fs), duplicate template name → 409, missing snapshot → 404, invalid name format → 400, list (reads `.json` sidecars), delete (removes `.qcow2` + `.json`). Provision-from-template: `source_type="template"` resolves sidecar `os_variant` and passes the template `.qcow2` as the backing image path.
+
+### Frontend (Vitest + React Testing Library)
+
+Run: `cd web-ui && npm test`
+
+- `NetworkConfig` component: interface dropdown, DHCP/Static toggle, static-IP field visibility and validation.
+- `ProvisionForm`: form validation (name pattern, required fields, pool disk-size clamping), Image Source selector *(Phase 5)*.
+- API client (`api/client.js`): fetch mock coverage for all endpoints including template hooks *(Phase 5)*.
+- `SnapshotList` export modal *(Phase 5)*: modal open/close, template name validation, success path, 409 duplicate-name error display.
+- VM Templates section on `Images.jsx` *(Phase 5)*: table renders from mocked `GET /templates` response, delete confirmation modal, empty state.
+- `ProvisionForm` source selector *(Phase 5)*: toggling "From Template" hides Ubuntu Version, shows Template dropdown.
+
+### E2E (Playwright)
+
+Run: `cd web-ui && npm run test:e2e`
+
+Specs live in `web-ui/e2e/`. Each flow is first verified interactively via the Playwright MCP server, then captured as a permanent spec.
+
+- `dashboard.spec.js` — page loads, VM table renders, polling updates.
+- `provision.spec.js` — bridge + DHCP flow, bridge + static-IP flow, pool selection, form validation.
+- `lifecycle.spec.js` — start, stop, restart, delete (against `sandbox` VM).
+- `snapshots.spec.js` — take snapshot, restore, delete.
+- `network.spec.js` — network interface + IP update.
+- `images.spec.js` — images table renders, Sync All button, log output stream.
+- `pools.spec.js` — pool table, create pool modal, set-default, lifecycle actions.
+- `templates.spec.js` *(Phase 5, non-destructive)*:
+  - VM Templates section renders on `/images` (empty state or table).
+  - Export modal opens and cancels on existing `sandbox` VM snapshot (no actual export committed).
+  - Provision form source selector toggles between "Ubuntu Base Image" and "From Template"; Template dropdown appears when "From Template" is selected.

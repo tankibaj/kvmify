@@ -123,6 +123,12 @@ class ProvisionRequest(BaseModel):
     gateway: Optional[str] = Field(None, description="Gateway IP (required when ip_mode=static)")
     dns: Optional[str] = Field("8.8.8.8", description="DNS server IP")
     storage_pool: Optional[str] = Field(None, description="Storage pool name (uses default if omitted)")
+    source_type: Literal["base_image", "template"] = Field(
+        "base_image", description="Source type for provisioning: base_image or template"
+    )
+    template_name: Optional[str] = Field(
+        None, description="Template name to provision from (required when source_type=template)"
+    )
 
     @field_validator("vm_name")
     @classmethod
@@ -140,6 +146,13 @@ class ProvisionRequest(BaseModel):
                 raise ValueError("static_ip is required when ip_mode is 'static'")
             if not self.gateway:
                 raise ValueError("gateway is required when ip_mode is 'static'")
+        return self
+
+    @model_validator(mode="after")
+    def validate_template_fields(self) -> "ProvisionRequest":
+        if self.source_type == "template":
+            if not self.template_name or not self.template_name.strip():
+                raise ValueError("template_name is required when source_type is 'template'")
         return self
 
 
@@ -216,6 +229,31 @@ class SnapshotCreate(BaseModel):
 
     name: str
     description: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Templates
+# ---------------------------------------------------------------------------
+
+class TemplateInfo(BaseModel):
+    """Information about a standalone VM template (exported snapshot)."""
+
+    name: str
+    size: Optional[int] = None        # bytes of the .qcow2
+    created: Optional[str] = None     # ISO-8601
+    source_vm: Optional[str] = None
+    source_snapshot: Optional[str] = None
+    os_variant: Optional[str] = None
+
+
+class TemplateExportRequest(BaseModel):
+    """Request body for POST /vms/{name}/snapshots/{snap}/export."""
+
+    template_name: str = Field(
+        ...,
+        pattern=r"^[a-z0-9][a-z0-9\-]{0,63}$",
+        description="Template name: lowercase letters, digits, and hyphens, max 64 chars",
+    )
 
 
 # ---------------------------------------------------------------------------

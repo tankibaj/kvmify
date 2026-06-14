@@ -236,14 +236,19 @@ def provision(
     except libvirt.libvirtError:
         pass  # expected — domain not found
 
-    # 1b. Base image path
-    base_img_name = config.BASE_IMAGE_NAMES[req.ubuntu_version]
-    base_img_path = os.path.join(config.BASE_IMAGE_DIR, base_img_name)
-    if not os.path.exists(base_img_path):
-        raise ValueError(
-            f"Base image not found: {base_img_path}. "
-            f"Run POST /images/sync to download it first."
-        )
+    # 1b. Base image / template path
+    if req.source_type == "template" and req.template_name:
+        base_img_path = os.path.join(config.TEMPLATES_DIR, f"{req.template_name}.qcow2")
+        if not os.path.exists(base_img_path):
+            raise ValueError(f"Template '{req.template_name}' not found at {base_img_path}")
+    else:
+        base_img_name = config.BASE_IMAGE_NAMES[req.ubuntu_version]
+        base_img_path = os.path.join(config.BASE_IMAGE_DIR, base_img_name)
+        if not os.path.exists(base_img_path):
+            raise ValueError(
+                f"Base image not found: {base_img_path}. "
+                f"Run POST /images/sync to download it first."
+            )
 
     # 1c. Resolve storage pool + disk path
     pool_name = req.storage_pool or settings_service.get_default_pool()
@@ -293,7 +298,18 @@ def provision(
     network_arg = network_service.resolve_virtinstall_network(conn, req.network)
 
     # 4. OS variant
-    os_variant = config.OS_VARIANTS[req.ubuntu_version]
+    if req.source_type == "template" and req.template_name:
+        _tpl_json = os.path.join(config.TEMPLATES_DIR, f"{req.template_name}.json")
+        os_variant = "ubuntu22.04"  # safe default
+        try:
+            import json as _json
+            with open(_tpl_json) as _fh:
+                _meta = _json.load(_fh)
+            os_variant = _meta.get("os_variant") or "ubuntu22.04"
+        except (FileNotFoundError, KeyError, ValueError, OSError):
+            pass
+    else:
+        os_variant = config.OS_VARIANTS[req.ubuntu_version]
 
     # 5. Build subprocess command
     cmd = [

@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { RefreshCw, Loader2 } from 'lucide-react'
+import { RefreshCw, Loader2, Trash2 } from 'lucide-react'
 import TopBar from '../components/layout/TopBar'
-import { Button, Card, Badge, CopyButton } from '../components/ui'
-import { useImages, useSyncImages } from '../api/client'
+import { Button, Card, Badge, CopyButton, Modal } from '../components/ui'
+import { useImages, useSyncImages, useTemplates, useDeleteTemplate } from '../api/client'
 import { useNotify } from '../contexts/NotificationContext'
 
 function formatBytes(bytes) {
@@ -56,6 +56,10 @@ export default function Images() {
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [syncStatus?.log])
+
+  const { data: templates = [] } = useTemplates()
+  const deleteTemplate = useDeleteTemplate()
+  const [deleteTemplateTarget, setDeleteTemplateTarget] = useState(null)
 
   const handleSyncAll = () => syncAllMutation.mutate()
 
@@ -229,6 +233,106 @@ export default function Images() {
             </div>
           </div>
         )}
+
+        {/* VM Templates */}
+        <div style={{ marginTop: '40px' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>VM Templates</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
+              Reusable images exported from VM snapshots.
+            </p>
+          </div>
+
+          <Card style={{ overflow: 'hidden' }}>
+            {templates.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#475569', fontSize: '13px' }}>
+                No templates yet — export a VM snapshot to create one.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Name</th>
+                    <th style={thStyle}>Size</th>
+                    <th style={thStyle}>Created</th>
+                    <th style={thStyle}>Source</th>
+                    <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.map((t) => (
+                    <tr
+                      key={t.name}
+                      style={{ borderBottom: '1px solid #1e1e2e' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(30,30,46,0.5)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <td style={{ ...tdStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '13px' }}>
+                        {t.name}
+                      </td>
+                      <td style={{ ...tdStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px', color: '#94a3b8' }}>
+                        {formatBytes(t.size)}
+                      </td>
+                      <td style={{ ...tdStyle, color: '#94a3b8', fontSize: '12px' }}>
+                        {formatRelativeTime(t.created)}
+                      </td>
+                      <td style={{ ...tdStyle, color: '#94a3b8', fontSize: '12px', fontFamily: 'JetBrains Mono, monospace' }}>
+                        {t.source_vm
+                          ? `${t.source_vm}${t.source_snapshot ? ` @ ${t.source_snapshot}` : ''}`
+                          : '—'}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTemplateTarget(t.name)}
+                          style={{ color: '#f43f5e' }}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+
+        {/* Delete Template Confirm Modal */}
+        <Modal
+          isOpen={!!deleteTemplateTarget}
+          onClose={() => setDeleteTemplateTarget(null)}
+          title="Delete Template"
+          footer={
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setDeleteTemplateTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                loading={deleteTemplate.isPending}
+                onClick={() => deleteTemplate.mutate(
+                  { name: deleteTemplateTarget },
+                  { onSuccess: () => setDeleteTemplateTarget(null) }
+                )}
+              >
+                <Trash2 size={13} />
+                Delete
+              </Button>
+            </>
+          }
+        >
+          <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8', lineHeight: 1.6 }}>
+            Permanently delete template{' '}
+            <strong style={{ color: '#f43f5e', fontFamily: 'JetBrains Mono, monospace' }}>
+              {deleteTemplateTarget}
+            </strong>
+            ? This cannot be undone.
+          </p>
+        </Modal>
       </div>
 
       <style>{`

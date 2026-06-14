@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from api import schemas
-from api.services import libvirt_service, snapshot_service
+from api.services import libvirt_service, snapshot_service, template_service
 
 router = APIRouter()
 
@@ -76,3 +76,20 @@ def delete_snapshot(name: str, snap: str) -> None:
             snapshot_service.delete_snapshot(conn, name, snap)
     except (ValueError, LookupError) as exc:
         raise _map_error(exc)
+
+
+@router.post("/{name}/snapshots/{snap}/export", status_code=201, response_model=schemas.TemplateInfo)
+def export_snapshot_as_template(name: str, snap: str, body: schemas.TemplateExportRequest) -> schemas.TemplateInfo:
+    """Export a VM snapshot as a standalone reusable template."""
+    try:
+        with libvirt_service.connection() as conn:
+            info = template_service.export_from_snapshot(conn, name, snap, body.template_name)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return schemas.TemplateInfo(**info)

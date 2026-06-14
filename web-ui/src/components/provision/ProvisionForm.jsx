@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { Button, Input, Select, Slider, CopyButton } from '../ui'
-import { useNetworks, usePools, useProvisionVM } from '../../api/client'
+import { useNetworks, usePools, useProvisionVM, useTemplates } from '../../api/client'
 import NetworkConfig, { validateNetworkConfig } from './NetworkConfig'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -96,6 +96,8 @@ export default function ProvisionForm() {
   const [form, setForm] = useState({
     vm_name: '',
     ubuntu_version: '2204',
+    source_type: 'base_image',
+    template_name: '',
     cpu: 2,
     ram_mb: 2048,
     disk_gb: 20,
@@ -116,6 +118,7 @@ export default function ProvisionForm() {
   const { data: networksData } = useNetworks()
   const { data: pools } = usePools()
   const provision = useProvisionVM()
+  const { data: templates = [] } = useTemplates()
 
   // Auto-select default pool
   useEffect(() => {
@@ -157,6 +160,7 @@ export default function ProvisionForm() {
       errs.vm_name = 'Max 32 characters'
     }
     if (!form.storage_pool) errs.storage_pool = 'Select a storage pool'
+    if (form.source_type === 'template' && !form.template_name) errs.template_name = 'Select a template'
     if (!form.ssh_public_key.trim()) errs.ssh_public_key = 'SSH public key is required'
     const { valid: netValid, errors: netErrors } = validateNetworkConfig({
       network: form.network,
@@ -176,7 +180,10 @@ export default function ProvisionForm() {
     if (!validate()) return
     const payload = {
       vm_name: form.vm_name,
-      ubuntu_version: form.ubuntu_version,
+      ...(form.source_type === 'base_image'
+        ? { ubuntu_version: form.ubuntu_version }
+        : { template_name: form.template_name }),
+      source_type: form.source_type,
       cpu: form.cpu,
       ram_mb: form.ram_mb,
       disk_gb: form.disk_gb,
@@ -234,15 +241,47 @@ export default function ProvisionForm() {
               error={errors.vm_name}
             />
             <Select
-              label="Ubuntu Version"
-              id="ubuntu-version"
-              value={form.ubuntu_version}
-              onChange={e => setForm(f => ({ ...f, ubuntu_version: e.target.value }))}
+              label="Image Source"
+              id="image-source"
+              value={form.source_type}
+              onChange={e => setForm(f => ({ ...f, source_type: e.target.value, template_name: '' }))}
             >
-              <option value="2004">20.04 LTS Focal Fossa</option>
-              <option value="2204">22.04 LTS Jammy Jellyfish</option>
-              <option value="2404">24.04 LTS Noble Numbat</option>
+              <option value="base_image">Ubuntu Base Image</option>
+              <option value="template">From Template</option>
             </Select>
+            {form.source_type === 'base_image' ? (
+              <Select
+                label="Ubuntu Version"
+                id="ubuntu-version"
+                value={form.ubuntu_version}
+                onChange={e => setForm(f => ({ ...f, ubuntu_version: e.target.value }))}
+              >
+                <option value="2004">20.04 LTS Focal Fossa</option>
+                <option value="2204">22.04 LTS Jammy Jellyfish</option>
+                <option value="2404">24.04 LTS Noble Numbat</option>
+              </Select>
+            ) : (
+              <Select
+                label="Template"
+                id="template-select"
+                value={form.template_name}
+                onChange={e => setForm(f => ({ ...f, template_name: e.target.value }))}
+                disabled={templates.length === 0}
+              >
+                {templates.length === 0 ? (
+                  <option value="">No templates available — export a snapshot first.</option>
+                ) : (
+                  <>
+                    <option value="">Select template…</option>
+                    {templates.map(t => (
+                      <option key={t.name} value={t.name}>
+                        {t.name}{t.source_vm ? ` (from ${t.source_vm})` : ''}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </Select>
+            )}
           </div>
         </div>
 
@@ -521,7 +560,7 @@ export default function ProvisionForm() {
         </div>
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <SummaryRow label="VM Name" value={form.vm_name || '—'} />
-          <SummaryRow label="OS" value={UBUNTU_LABELS[form.ubuntu_version] || '—'} />
+          <SummaryRow label="OS" value={form.source_type === 'base_image' ? (UBUNTU_LABELS[form.ubuntu_version] || '—') : (form.template_name || '— select template —')} />
           <SummaryRow label="CPU" value={`${form.cpu} vCPU`} />
           <SummaryRow label="Memory" value={formatRam(form.ram_mb)} />
           <SummaryRow label="Disk" value={`${form.disk_gb} GB`} />

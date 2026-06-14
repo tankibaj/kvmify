@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useVMSnapshots, useCreateSnapshot, useRestoreSnapshot, useDeleteSnapshot } from '../../api/client'
+import { useVMSnapshots, useCreateSnapshot, useRestoreSnapshot, useDeleteSnapshot, useExportTemplate } from '../../api/client'
 import { Button, Badge, Modal } from '../ui'
-import { Camera, RotateCcw, Trash2 } from 'lucide-react'
+import { Camera, RotateCcw, Trash2, PackageCheck } from 'lucide-react'
 
 function formatDate(iso) {
   if (!iso) return '—'
@@ -35,6 +35,9 @@ export default function SnapshotList({ vmName }) {
   const createSnap = useCreateSnapshot()
   const restoreSnap = useRestoreSnapshot()
   const deleteSnap = useDeleteSnapshot()
+  const exportTpl = useExportTemplate()
+  const [exportTarget, setExportTarget] = useState(null)
+  const [templateName, setTemplateName] = useState('')
 
   // Take snapshot modal
   const [takeOpen, setTakeOpen] = useState(false)
@@ -192,6 +195,15 @@ export default function SnapshotList({ vmName }) {
                 >
                   <RotateCcw size={12} />
                   Restore
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setExportTarget(snap.name); setTemplateName('') }}
+                  style={{ color: '#10b981' }}
+                >
+                  <PackageCheck size={12} />
+                  Export
                 </Button>
                 <Button
                   variant="ghost"
@@ -360,6 +372,64 @@ export default function SnapshotList({ vmName }) {
           </strong>
           ? This cannot be undone.
         </p>
+      </Modal>
+
+      {/* Export Template Modal */}
+      <Modal
+        isOpen={!!exportTarget}
+        onClose={() => setExportTarget(null)}
+        title="Export Snapshot as Template"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setExportTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={exportTpl.isPending}
+              disabled={!/^[a-z0-9][a-z0-9-]{0,63}$/.test(templateName)}
+              onClick={() => exportTpl.mutate(
+                { vmName, snap: exportTarget, templateName },
+                { onSuccess: () => setExportTarget(null) }
+              )}
+            >
+              <PackageCheck size={13} />
+              Export Template
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8', lineHeight: 1.6 }}>
+            Creates a standalone, reusable disk image from this snapshot. It survives VM deletion and can be used to provision new VMs.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+              Template Name
+            </label>
+            <input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="my-template-name"
+              style={{
+                background: '#0a0a0f',
+                border: '1px solid #1e1e2e',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                color: '#e2e8f0',
+                fontSize: '13px',
+                outline: 'none',
+                fontFamily: 'JetBrains Mono, monospace',
+              }}
+              onFocus={(e) => (e.currentTarget.style.borderColor = '#6366f1')}
+              onBlur={(e) => (e.currentTarget.style.borderColor = '#1e1e2e')}
+            />
+            <div style={{ fontSize: '11px', color: '#475569' }}>
+              Lowercase letters, numbers, and hyphens only.
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   )

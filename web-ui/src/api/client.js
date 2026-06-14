@@ -294,3 +294,22 @@ export function useSetDefaultPool() {
     onError: (err) => notify.error(err.message),
   })
 }
+export function useTemplates() {
+  return useQuery({ queryKey: ['templates'], queryFn: () => apiFetch('/templates') })
+}
+export function useExportTemplate() {
+  const qc = useQueryClient(); const notify = useNotify()
+  return useMutation({
+    mutationFn: ({ vmName, snap, templateName }) => apiFetch(`/vms/${vmName}/snapshots/${snap}/export`, { method: 'POST', body: { template_name: templateName } }),
+    onSuccess: () => { notify.success('Template exported'); qc.invalidateQueries({ queryKey: ['templates'] }) },
+    onError: (err) => notify.error(err.message),
+  })
+}
+export function useDeleteTemplate() {
+  const qc = useQueryClient(); const notify = useNotify()
+  return useMutation({
+    mutationFn: ({ name }) => apiFetch(`/templates/${name}`, { method: 'DELETE' }),
+    onSuccess: () => { notify.success('Template deleted'); qc.invalidateQueries({ queryKey: ['templates'] }) },
+    onError: (err) => notify.error(err.message),
+  })
+}

@@ -734,3 +734,123 @@ def test_console_no_vnc_returns_400(client: TestClient, patch_libvirt, mock_conn
 
     resp = client.get("/vms/no-vnc-vm/console")
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# 16. POST /provision — source_type=template uses TEMPLATES_DIR
+# ---------------------------------------------------------------------------
+
+def test_provision_from_template_uses_templates_dir(
+    client: TestClient, patch_libvirt, mock_conn, tmp_path, tmp_settings, monkeypatch
+):
+    """POST /provision with source_type=template uses template qcow2 as base_img_path."""
+    import json as _json
+    from api import config as _config
+
+    # Point TEMPLATES_DIR to tmp_path and create a fake template + sidecar
+    monkeypatch.setattr(_config, "TEMPLATES_DIR", str(tmp_path))
+    tpl_qcow2 = tmp_path / "mytpl.qcow2"
+    tpl_qcow2.write_bytes(b"fake template")
+    tpl_json = tmp_path / "mytpl.json"
+    tpl_json.write_text(_json.dumps({"os_variant": "ubuntu22.04"}))
+
+    mock_domain = _make_mock_domain("tpl-vm", vnc_port=5910)
+    mock_conn.lookupByName.side_effect = [
+        libvirt.libvirtError("not found"),  # uniqueness check
+        mock_domain,                         # poll after provision
+    ]
+
+    mock_pool = MagicMock()
+    mock_pool.isActive.return_value = True
+    mock_pool.info.return_value = [1, 500 * 1024**3, 10 * 1024**3, 490 * 1024**3]
+    mock_pool.XMLDesc.return_value = "<pool type='dir'><target><path>/mnt/pool</path></target></pool>"
+    mock_pool.refresh = MagicMock()
+    mock_conn.storagePoolLookupByName.side_effect = None
+    mock_conn.storagePoolLookupByName.return_value = mock_pool
+
+    fake_proc = MagicMock()
+    fake_proc.stdout = "VM provisioned"
+    fake_proc.returncode = 0
+
+    seed_ud = str(tmp_path / "tpl-vm-user-data.yaml")
+
+    with (
+        patch(SUBPROCESS_PATCH, return_value=fake_proc) as mock_sub,
+        patch("api.services.cloudinit_service.write_seed_inputs", return_value=(seed_ud, None)),
+        patch("api.services.cloudinit_service.render_user_data", return_value="#cloud-config\n"),
+        patch(SETTINGS_DEFAULT_POOL_PATCH, return_value="default"),
+        patch("api.services.vm_service.time") as mock_time,
+    ):
+        mock_time.time.side_effect = [0, 0, 200]
+        mock_time.sleep = MagicMock()
+
+        resp = client.post("/vms/provision", json={
+            "vm_name": "tpl-vm",
+            "ubuntu_version": "2204",
+            "cpu": 2,
+            "ram_mb": 2048,
+            "disk_gb": 20,
+            "ssh_public_key": "ssh-rsa AAAA...",
+            "network": "public",
+            "ip_mode": "dhcp",
+            "source_type": "template",
+            "template_name": "mytpl",
+        })
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["vm_name"] == "tpl-vm"
+    assert data["status"] == "provisioned"
+
+    # Verify the script was called with the template qcow2 as base_img_path (arg index 3)
+    call_args = mock_sub.call_args[0][0]
+    assert "mytpl.qcow2" in call_args[3]
+    assert str(tmp_path) in call_args[3]
+    # os_variant should be from sidecar (ubuntu22.04)
+    assert call_args[9] == "ubuntu22.04"
+
+
+def test_provision_from_template_missing_template_returns_400(
+    client: TestClient, patch_libvirt, mock_conn, tmp_path, tmp_settings, monkeypatch
+):
+    """POST /provision with source_type=template returns 400 when template qcow2 missing."""
+    from api import config as _config
+    monkeypatch.setattr(_config, "TEMPLATES_DIR", str(tmp_path))
+
+    mock_conn.lookupByName.side_effect = libvirt.libvirtError("not found")
+
+    mock_pool = MagicMock()
+    mock_pool.isActive.return_value = True
+    mock_pool.info.return_value = [1, 500 * 1024**3, 10 * 1024**3, 490 * 1024**3]
+    mock_pool.XMLDesc.return_value = "<pool type='dir'><target><path>/mnt/pool</path></target></pool>"
+    mock_conn.storagePoolLookupByName.side_effect = None
+    mock_conn.storagePoolLookupByName.return_value = mock_pool
+
+    with patch(SETTINGS_DEFAULT_POOL_PATCH, return_value="default"):
+        resp = client.post("/vms/provision", json={
+            "vm_name": "tpl-vm",
+            "ubuntu_version": "2204",
+            "cpu": 1,
+            "ram_mb": 1024,
+            "disk_gb": 10,
+            "ssh_public_key": "ssh-rsa AAAA...",
+            "source_type": "template",
+            "template_name": "nonexistent-tpl",
+        })
+    assert resp.status_code == 400
+    assert "not found" in resp.json()["detail"].lower()
+
+
+def test_provision_template_without_name_returns_422(client: TestClient, patch_libvirt, mock_conn):
+    """POST /provision with source_type=template but no template_name returns 422."""
+    resp = client.post("/vms/provision", json={
+        "vm_name": "tpl-vm",
+        "ubuntu_version": "2204",
+        "cpu": 1,
+        "ram_mb": 1024,
+        "disk_gb": 10,
+        "ssh_public_key": "ssh-rsa AAAA...",
+        "source_type": "template",
+        # template_name omitted
+    })
+    assert resp.status_code == 422

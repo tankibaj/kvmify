@@ -23,6 +23,12 @@ vi.mock('../api/client', () => {
       isError: false,
       error: null,
     }),
+    useTemplates: () => ({
+      data: [
+        { name: 'ubuntu-22-base', source_vm: 'my-vm', source_snapshot: 'snap-001' },
+        { name: 'dev-template', source_vm: 'dev-vm', source_snapshot: null },
+      ],
+    }),
   }
 })
 
@@ -152,6 +158,7 @@ describe('ProvisionForm — happy path', () => {
     expect(payload).toMatchObject({
       vm_name: 'my-test-vm',
       ubuntu_version: expect.any(String),
+      source_type: 'base_image',
       cpu: expect.any(Number),
       ram_mb: expect.any(Number),
       disk_gb: expect.any(Number),
@@ -165,5 +172,35 @@ describe('ProvisionForm — happy path', () => {
     expect(payload.subnet_mask).toBeUndefined()
     expect(payload.gateway).toBeUndefined()
     expect(payload.dns).toBeUndefined()
+  })
+})
+
+// ─── Image source selector ────────────────────────────────────────────────────
+
+describe('ProvisionForm — image source selector', () => {
+  it('shows Ubuntu Version select by default (base_image source)', () => {
+    renderWithProviders(<ProvisionForm />)
+    expect(screen.getByLabelText(/ubuntu version/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^template$/i)).not.toBeInTheDocument()
+  })
+
+  it('switching to "From Template" shows Template select and hides Ubuntu Version', async () => {
+    renderWithProviders(<ProvisionForm />)
+    const imageSourceSelect = screen.getByLabelText(/image source/i)
+    fireEvent.change(imageSourceSelect, { target: { value: 'template' } })
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/ubuntu version/i)).not.toBeInTheDocument()
+      expect(screen.getByLabelText(/^template$/i)).toBeInTheDocument()
+    })
+  })
+
+  it('template select shows available templates from useTemplates', async () => {
+    renderWithProviders(<ProvisionForm />)
+    const imageSourceSelect = screen.getByLabelText(/image source/i)
+    fireEvent.change(imageSourceSelect, { target: { value: 'template' } })
+    await waitFor(() => {
+      expect(screen.getByText(/ubuntu-22-base/i)).toBeInTheDocument()
+      expect(screen.getByText(/dev-template/i)).toBeInTheDocument()
+    })
   })
 })
