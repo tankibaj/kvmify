@@ -70,12 +70,16 @@ This file (CLAUDE.md) covers:
 
 ## Current Repository State
 
-As of this writing the repo contains only `PLAN.md` and `CLAUDE.md`, no
-application code exists yet, and the directory is not yet a git repo. The whole
-project is built from scratch. The project is at PLAN.md Phase 1, Step 1.
-Future instances should not assume any `api/`, `web-ui/`, or `scripts/`
-directory exists locally — build them in PLAN.md's exact phase/step order. Git
-and the GitHub repo are created by Claude Code in Phase 1 (see Git & GitHub).
+The project is **fully built through PLAN.md Phase 5 (Snapshot → Template
+export)** and live at http://192.168.178.101. The repo is a git repo
+(`tankibaj/kvmify`, default branch `main`) and contains `api/` (FastAPI
+backend), `web-ui/` (React app), `scripts/` (host + deploy scripts), and
+`deploy/` (systemd units + nginx config) — all scaffolded in PLAN.md phase
+order. PLAN.md remains the source of truth for architecture and build history;
+new work continues from the current state rather than building from scratch.
+For the in-repo code map, libvirt/subprocess test seams, and the test
+strategy, see Claude Code's project memory (kvmify-codebase-map,
+kvmify-testing, kvmify-host-environment).
 
 The entire architecture (request flow, API contract, provisioning pipeline, UI
 spec, design tokens) lives in PLAN.md. Read it before writing any code. The
@@ -271,6 +275,13 @@ dev work locally
 - Every backend and frontend feature ships with automated tests (see Testing)
 - Verify every FE feature/bug via the Playwright MCP server, then capture it as
   a Playwright E2E spec
+- **Every user-facing workflow MUST have an automated Playwright E2E UI test in
+  `web-ui/e2e/`.** No workflow (provision, lifecycle, snapshot, restore, resize,
+  network update, template export/delete, pool create/lifecycle/delete, images
+  sync, console) is "done" until an E2E spec drives it through the real UI.
+  Mutating workflows use a throwaway `kvmify-e2e-*` fixture they create and
+  destroy; read-only workflows open the UI and Cancel (see "⛔ PRODUCTION
+  SAFETY"). New workflows ship with their E2E spec in the same change.
 
 ---
 

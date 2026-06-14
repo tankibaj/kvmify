@@ -956,7 +956,9 @@ Run: `cd web-ui && npm test`
 
 Run: `cd web-ui && npm run test:e2e`
 
-Specs live in `web-ui/e2e/`. Each flow is first verified interactively via the Playwright MCP server, then captured as a permanent spec.
+**Coverage rule: every user-facing workflow MUST have an automated Playwright E2E UI test.** No workflow is considered done until a spec drives it end-to-end through the real UI. Each flow is first verified interactively via the Playwright MCP server, then captured as a permanent spec. Mutating workflows run against a throwaway `kvmify-e2e-*` fixture the spec creates and destroys; read-only workflows open the UI and Cancel. New workflows ship with their E2E spec in the same change.
+
+Specs live in `web-ui/e2e/`.
 
 - `dashboard.spec.js` — page loads, VM table renders, polling updates.
 - `provision.spec.js` — bridge + DHCP flow, bridge + static-IP flow, pool selection, form validation.

@@ -55,6 +55,17 @@ test.describe.serial('VM workflows (self-provisioned throwaway VM, never product
     await expect(page.getByText(VM, { exact: true }).first()).toBeVisible({ timeout: 20_000 })
   })
 
+  // 2b ── VM detail page renders all tabs (read-only smoke; our own VM).
+  test('VM detail page renders all tabs', async ({ page }) => {
+    await page.goto(`/vms/${VM}`)
+    for (const tab of ['Overview', 'Console', 'Snapshots', 'Network', 'Resize']) {
+      await expect(
+        page.getByRole('button', { name: tab, exact: true }).first()
+      ).toBeVisible({ timeout: 15_000 })
+    }
+    await expect(page.getByText('[object Object]')).toHaveCount(0)
+  })
+
   // 3 ── Take a snapshot of the (running) VM through the UI.
   test('take a snapshot of the running VM', async ({ page }) => {
     test.setTimeout(60_000)

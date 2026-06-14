@@ -32,9 +32,8 @@ sections in `CLAUDE.md` and `PLAN.md`.
 | `provision.spec.js` | read-only | Provision form validation & summary (no submit) |
 | `images.spec.js` | read-only | Base-images table + Sync All affordance |
 | `templates.spec.js` | read-only | Images "VM Templates" section + Provision image-source toggle |
-| `vmdetail.spec.js` | read-only | Opens an existing VM's tabs (no mutations — Cancel only) |
 | `pools.spec.js` | read-only | Pools page + Create Pool modal open/close (no create) |
-| **`vm-workflows.spec.js`** | **destructive** | **Provisions a throwaway VM, then exercises every VM workflow on it: snapshot → export template → restore → delete snapshot → network update → stop → resize → delete template → delete VM** |
+| **`vm-workflows.spec.js`** | **destructive** | **Provisions a throwaway VM, then exercises every VM workflow on it: detail tabs render → snapshot → export template → restore → delete snapshot → network update → stop → resize → delete template → delete VM** |
 | **`pools-workflows.spec.js`** | **destructive** | **Creates a throwaway pool, then stop/start → set-default (restored) → delete** |
 
 The destructive specs are `serial` (each test builds on the last) and create
@@ -116,6 +115,28 @@ PLAYWRIGHT_BASE_URL=http://192.168.178.101 npx playwright test --headed
 ```
 
 ---
+
+## Troubleshooting: `net::ERR_ADDRESS_UNREACHABLE` from a Mac
+
+If `curl http://192.168.178.101` works but the browser tests fail to load the
+page, the OS/browser is blocking **local-network access** for the automated
+browser. Two distinct causes (the config already handles the second):
+
+1. **macOS 15 (Sequoia) "Local Network" privacy permission** — macOS blocks an
+   app from reaching LAN devices until you grant it. The first run usually pops
+   a prompt *"Terminal wants to access devices on your local network"* → click
+   **Allow**. If you dismissed it, enable it manually:
+   **System Settings → Privacy & Security → Local Network →** toggle on your
+   terminal (Terminal / iTerm) and/or `node`. This is enforced by macOS and no
+   browser flag can bypass it.
+
+2. **Chrome 142+ Local Network Access (LNA)** — Chromium treats LAN IPs as
+   non-public and, with no human to approve the prompt, denies them. The
+   Playwright config already passes
+   `--ip-address-space-overrides=<host>:80=public` (derived from the base URL)
+   plus `--disable-features=LocalNetworkAccessChecks,…` to handle this.
+
+Running **on the KVM host itself** avoids both (the target is `127.0.0.1`).
 
 ## Reports & debugging
 

@@ -13,10 +13,10 @@ test.describe('Dashboard', () => {
     await expect(page.getByText('RAM').first()).toBeVisible()
     await expect(page.getByText('Disk').first()).toBeVisible()
 
-    // VM table renders rows for the real VMs (sandbox exists on the host),
-    // or an empty state — accept either, but the page must not be blank.
-    const hasSandbox = await page.getByText('sandbox').first().isVisible().catch(() => false)
+    // VM table renders — either at least one VM row, or the empty state.
+    // (No production VM name is hardcoded; the page just must not be blank.)
+    const hasRows = await page.locator('table tbody tr').first().isVisible().catch(() => false)
     const hasEmpty = await page.getByText(/no virtual machines/i).first().isVisible().catch(() => false)
-    expect(hasSandbox || hasEmpty).toBeTruthy()
+    expect(hasRows || hasEmpty).toBeTruthy()
   })
 })
