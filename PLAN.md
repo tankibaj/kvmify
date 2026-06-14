@@ -51,11 +51,44 @@ later in this document. Where they conflict, **these win**:
    - `default` → "NAT (host-only)"        → `--network network=default`
    - macvtap   → "Macvtap (LAN)"          → `--network type=direct,source=<nic>,source_mode=bridge`
    (A `private` NAT net on virbr1/10.0.0.0/24 also exists but is not surfaced.)
-4. **VM scope.** KVMify manages ALL VMs on the host — including 5 pre-existing
-   ones (`ip-172-16-100-{71,72,73}`, `sandbox`, `container`). No namespacing or
-   read-only protection. Lifecycle actions act on them too (accepted risk).
+4. **VM scope.** KVMify (the product) manages ALL VMs on the host — including 5
+   pre-existing ones (`ip-172-16-100-{71,72,73}`, `sandbox`, `container`). No
+   namespacing or read-only protection in the app; an end user's lifecycle
+   actions act on them too. **BUT this is a runtime product capability, not a
+   licence for Claude Code: during development/testing/verification the 5
+   production VMs are strictly off-limits to mutation — see "⛔ Production
+   Safety" below.**
 5. **To install in Step 2** (absent on host): Node.js, npm, nginx, gh CLI,
    noVNC, websockify.
+
+---
+
+## ⛔ Production Safety (AUTHORITATIVE — overrides convenience everywhere)
+
+The host runs **real production VMs** (`ip-172-16-100-{71,72,73}`, `sandbox`,
+`container`, and any others). Although KVMify manages all of them, **no
+development, test, verification, or maintenance step may ever mutate, modify,
+restart, stop, snapshot, restore, resize, re-network, or delete a pre-existing /
+production resource** (VM, disk volume, snapshot, network, or storage pool).
+
+**Always CREATE a new, throwaway resource before any UPDATE / DELETE / modify.**
+
+- Verify destructive/mutating behavior only on a throwaway resource you create
+  (e.g. a `kvmify-e2e-*` / `kvmify-smoke-*` volume-backed domain, or a temp
+  pool/volume), then tear it down fully (`snapshot-delete` → `undefine
+  --snapshots-metadata` → `vol-delete`).
+- Production VMs are **read-only** for Claude Code: `GET` endpoints and
+  `virsh dumpxml/list/dominfo` only. Never invoke a mutating
+  endpoint/`virsh`/script against them — not even to "just check".
+- Automated unit/integration tests mock libvirt/subprocess/fs (never hit the
+  host). Playwright E2E that exercises a mutating flow must create and destroy
+  its own throwaway fixture VM (prefix `kvmify-e2e-`); E2E that touches an
+  existing VM stays strictly read-only (open UI, then Cancel — never submit).
+- Throwaway resources use a greppable disposable prefix (`kvmify-e2e-`,
+  `kvmify-smoke-`).
+
+This is the create-before-modify guarantee: the 5 production VMs must remain
+byte-for-byte untouched by any KVMify development or test activity.
 
 ---
 

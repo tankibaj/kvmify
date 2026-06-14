@@ -9,7 +9,17 @@ async function apiFetch(path, opts = {}) {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || `HTTP ${res.status}`)
+    let detail = err.detail
+    // FastAPI 422 returns detail as an array of {loc,msg,type}; other errors a
+    // string. Normalize to a readable message so toasts never show "[object Object]".
+    if (Array.isArray(detail)) {
+      detail = detail
+        .map((d) => (d && typeof d === 'object' ? d.msg || JSON.stringify(d) : String(d)))
+        .join('; ')
+    } else if (detail && typeof detail === 'object') {
+      detail = detail.msg || JSON.stringify(detail)
+    }
+    throw new Error(detail || `HTTP ${res.status}`)
   }
   return res.status === 204 ? null : res.json()
 }
@@ -192,10 +202,11 @@ export function useCreateSnapshot() {
   const qc = useQueryClient()
   const notify = useNotify()
   return useMutation({
-    mutationFn: ({ name, ...data }) => apiFetch(`/vms/${name}/snapshots`, { method: 'POST', body: data }),
-    onSuccess: (_, { name }) => {
+    mutationFn: ({ vmName, name, description }) =>
+      apiFetch(`/vms/${vmName}/snapshots`, { method: 'POST', body: { name, description } }),
+    onSuccess: (_, { vmName }) => {
       notify.success('Snapshot created')
-      qc.invalidateQueries({ queryKey: ['vm-snapshots', name] })
+      qc.invalidateQueries({ queryKey: ['vm-snapshots', vmName] })
     },
     onError: (err) => notify.error(err.message),
   })

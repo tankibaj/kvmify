@@ -27,6 +27,7 @@ def _make_domain_xml(
     vnc_port: int = 5900,
     network: str = "default",
     iface_type: str = "network",
+    vcpus: int = 2,
 ) -> str:
     if iface_type == "direct":
         iface_xml = "<interface type='direct'><source dev='enp4s0' mode='bridge'/></interface>"
@@ -35,6 +36,7 @@ def _make_domain_xml(
     return f"""
 <domain type='kvm'>
   <name>{name}</name>
+  <vcpu placement='static'>{vcpus}</vcpu>
   <devices>
     {iface_xml}
     <disk type='file' device='disk'>
@@ -64,9 +66,13 @@ def _make_mock_domain(
     domain = MagicMock(name=f"virDomain:{name}")
     domain.name.return_value = name
     domain.state.return_value = (state, 0)
-    domain.maxVcpus.return_value = vcpus
+    # maxVcpus() raises on stopped domains; the service now parses <vcpu> from
+    # XML instead. Make the mock raise too, so a regression to maxVcpus() fails.
+    domain.maxVcpus.side_effect = libvirt.libvirtError("domain is not running")
     domain.maxMemory.return_value = ram_mb * 1024  # KB
-    domain.XMLDesc.return_value = _make_domain_xml(name, vnc_port, network, iface_type)
+    domain.XMLDesc.return_value = _make_domain_xml(
+        name, vnc_port, network, iface_type, vcpus
+    )
     domain.create = MagicMock(return_value=0)
     domain.shutdown = MagicMock(return_value=0)
     domain.reboot = MagicMock(return_value=0)
@@ -171,6 +177,36 @@ def test_get_vm_detail(client: TestClient, patch_libvirt, mock_conn):
     assert data["vnc_port"] == 5901
     assert data["ip"] == "192.168.1.100"
     assert "ram_total_mb" in data
+
+
+def test_get_vm_detail_stopped_vm(client: TestClient, patch_libvirt, mock_conn):
+    """Regression: GET /vms/{name} must NOT 500 for a powered-off VM.
+
+    maxVcpus() raises 'domain is not running' on stopped domains; vcpus must be
+    read from the <vcpu> element instead. The mock's maxVcpus already raises.
+    """
+    d = _make_mock_domain("off-vm", state=libvirt.VIR_DOMAIN_SHUTOFF, vcpus=4)
+    mock_conn.lookupByName.return_value = d
+
+    resp = client.get("/vms/off-vm")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["state"] == "shutoff"
+    assert data["vcpus"] == 4
+
+
+def test_list_vms_includes_stopped_vm(client: TestClient, patch_libvirt, mock_conn):
+    """Regression: a single stopped VM must not 500 the whole list/dashboard."""
+    running = _make_mock_domain("run-vm", state=libvirt.VIR_DOMAIN_RUNNING, vcpus=2)
+    stopped = _make_mock_domain("off-vm", state=libvirt.VIR_DOMAIN_SHUTOFF, vcpus=8)
+    mock_conn.listAllDomains.return_value = [running, stopped]
+
+    resp = client.get("/vms")
+    assert resp.status_code == 200
+    by_name = {v["name"]: v for v in resp.json()}
+    assert by_name["off-vm"]["vcpus"] == 8
+    assert by_name["off-vm"]["state"] == "shutoff"
+    assert by_name["run-vm"]["vcpus"] == 2
 
 
 # ---------------------------------------------------------------------------

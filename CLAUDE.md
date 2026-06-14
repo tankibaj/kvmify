@@ -16,6 +16,42 @@ github.com/tankibaj/kvmify
 
 ---
 
+## ⛔ PRODUCTION SAFETY — HARD RULE (read first, no exceptions)
+
+The KVM host runs **real production VMs** (`ip-172-16-100-{71,72,73}`, `sandbox`,
+`container`, plus any others). KVMify "manages all VMs", so the app *can* act on
+them — but **Claude Code, during development, testing, verification, or any
+manual/automated step, MUST NEVER mutate, modify, restart, stop, snapshot,
+resize, re-network, or delete a pre-existing/production resource** (VM, disk
+volume, snapshot, network, or storage pool).
+
+**Create new, throwaway resources before you UPDATE, DELETE, or modify anything.**
+
+Concretely:
+- To test or verify ANY destructive/mutating operation (provision, snapshot,
+  restore, resize, network-update, delete, template export, pool create/delete),
+  **first create a throwaway resource you own** (e.g. define a `kvmify-e2e*` /
+  `kvmify-smoke*` volume-backed domain, or a temp pool/volume), operate ONLY on
+  it, then **tear it down completely** (snapshot-delete → undefine
+  `--snapshots-metadata` → vol-delete). The known-good pattern is the throwaway
+  volume-backed domain used in earlier smoke tests.
+- **Never** call lifecycle/snapshot/delete/resize/network endpoints or `virsh`
+  mutating commands against the 5 production VMs — not even "just to check".
+  Read-only inspection (`virsh dumpxml/list/dominfo`, `GET` endpoints) is fine.
+- Automated tests (pytest/Vitest) mock libvirt/subprocess/fs and never touch the
+  host. Playwright E2E that needs a mutating flow must run it against a
+  **throwaway fixture VM it creates and destroys**, never a production VM. E2E
+  that targets an existing VM (e.g. `sandbox`) must stay strictly read-only
+  (open tabs/modals, then Cancel — never submit a mutation).
+- Name throwaway resources with a clear, greppable prefix (`kvmify-e2e-`,
+  `kvmify-smoke-`) so they're obviously disposable and easy to clean up.
+
+This rule overrides convenience. If a verification can't be done without
+touching a production resource, create a throwaway resource for it or don't do
+it.
+
+---
+
 ## Source of Truth
 
 PLAN.md is the single source of truth for:
@@ -229,6 +265,8 @@ dev work locally
 - React app title: KVMify
 - No Docker anywhere
 - No authentication (LAN only)
+- **Never mutate/delete production resources — create a throwaway resource
+  first, then operate on it (see "⛔ PRODUCTION SAFETY" above)**
 - FastAPI /docs must always be accessible for debugging
 - Every backend and frontend feature ships with automated tests (see Testing)
 - Verify every FE feature/bug via the Playwright MCP server, then capture it as
@@ -267,7 +305,12 @@ feature code in the same step (not deferred).
 - **E2E (Playwright):** automated end-to-end specs covering the real user
   flows against the deployed UI — dashboard load, provision form (bridge +
   DHCP, bridge + static), VM lifecycle actions, snapshots, network update,
-  images sync. Live in `web-ui/e2e/`. Run: `cd web-ui && npm run test:e2e`
+  images sync. Live in `web-ui/e2e/`. Run: `cd web-ui && npm run test:e2e`.
+  **Mutating flows (provision/snapshot/restore/resize/network-update/delete/
+  template-export) MUST run against a throwaway fixture VM the spec creates and
+  destroys (prefix `kvmify-e2e-`) — NEVER a production VM.** Specs that target an
+  existing VM stay read-only (open UI, then Cancel). See "⛔ PRODUCTION SAFETY".
+  Vitest is scoped to `src/` (`vitest.config.js`) so it never collects e2e specs.
 - A phase is not "confirmed working" until its tests pass
 - `dev-deploy.sh` / `prod-deploy.sh` run pytest + Vitest before building, then
   Playwright E2E against the deployed UI after restart (any failure aborts)

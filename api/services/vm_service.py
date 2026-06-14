@@ -104,6 +104,23 @@ def _disk_gb_from_xml(xml_desc: str) -> Optional[int]:
     return None
 
 
+def _vcpus_from_xml(xml_desc: str) -> Optional[int]:
+    """Read the configured (maximum) vCPU count from domain XML.
+
+    Parsing the XML works for BOTH running and stopped domains.  ``maxVcpus()``
+    (virDomainGetMaxVcpus) raises "domain is not running" for inactive domains,
+    so it must not be used in the detail path — stopped VMs are valid.
+    """
+    try:
+        root = ET.fromstring(xml_desc)
+        vcpu_el = root.find("vcpu")
+        if vcpu_el is not None and vcpu_el.text and vcpu_el.text.strip().isdigit():
+            return int(vcpu_el.text.strip())
+    except ET.ParseError:
+        pass
+    return None
+
+
 def _best_ip(domain: libvirt.virDomain) -> Optional[str]:
     """Best-effort IPv4 extraction across multiple libvirt sources.
 
@@ -146,7 +163,7 @@ def list_vms(conn: libvirt.virConnect) -> list[schemas.VMSummary]:
             schemas.VMSummary(
                 name=domain.name(),
                 state=_state_str(domain),
-                vcpus=domain.maxVcpus(),
+                vcpus=_vcpus_from_xml(xml_desc),
                 ram_mb=domain.maxMemory() // 1024,
                 ip=_best_ip(domain),
                 network=_network_from_xml(xml_desc),
@@ -194,7 +211,7 @@ def get_vm(conn: libvirt.virConnect, name: str) -> schemas.VMDetail:
     return schemas.VMDetail(
         name=domain.name(),
         state=_state_str(domain),
-        vcpus=domain.maxVcpus(),
+        vcpus=_vcpus_from_xml(xml_desc),
         ram_mb=domain.maxMemory() // 1024,
         ip=_best_ip(domain),
         network=_network_from_xml(xml_desc),

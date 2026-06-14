@@ -58,7 +58,7 @@ export default function SnapshotList({ vmName }) {
 
   function handleTakeConfirm() {
     createSnap.mutate(
-      { name: vmName, snapshot_name: snapName, description: snapDesc || undefined },
+      { vmName, name: snapName, description: snapDesc || undefined },
       { onSuccess: () => setTakeOpen(false) }
     )
   }
