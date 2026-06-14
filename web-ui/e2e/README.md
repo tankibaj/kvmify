@@ -119,8 +119,18 @@ PLAYWRIGHT_BASE_URL=http://192.168.178.101 npx playwright test --headed
 ## Troubleshooting: `net::ERR_ADDRESS_UNREACHABLE` from a Mac
 
 If `curl http://192.168.178.101` works but the browser tests fail to load the
-page, the OS/browser is blocking **local-network access** for the automated
-browser. Two distinct causes (the config already handles the second):
+page (`net::ERR_ADDRESS_UNREACHABLE`), the OS/browser is blocking **local-network
+access** for the automated browser.
+
+**Guaranteed fix — `--tunnel`:** forwards the host UI to `127.0.0.1` over SSH, so
+the browser hits loopback (never blocked). Works regardless of the cause below:
+
+```bash
+scripts/e2e.sh --tunnel            # from your Mac
+scripts/e2e.sh --tunnel --headed
+```
+
+The two underlying causes (both also handled directly in `playwright.config.js`):
 
 1. **macOS 15 (Sequoia) "Local Network" privacy permission** — macOS blocks an
    app from reaching LAN devices until you grant it. The first run usually pops
@@ -132,11 +142,14 @@ browser. Two distinct causes (the config already handles the second):
 
 2. **Chrome 142+ Local Network Access (LNA)** — Chromium treats LAN IPs as
    non-public and, with no human to approve the prompt, denies them. The
-   Playwright config already passes
-   `--ip-address-space-overrides=<host>:80=public` (derived from the base URL)
-   plus `--disable-features=LocalNetworkAccessChecks,…` to handle this.
+   Playwright config already handles this with
+   `use.permissions: ['local-network-access']` (the supported fix, Playwright
+   ≥1.5x) plus `--ip-address-space-overrides=<host>:80=public` and
+   `--disable-features=LocalNetworkAccessChecks,…` launch args.
 
-Running **on the KVM host itself** avoids both (the target is `127.0.0.1`).
+Running **on the KVM host itself** also avoids both (the target is `127.0.0.1`).
+If the direct LAN run still fails after granting the macOS permission, use
+`--tunnel` — it always works.
 
 ## Reports & debugging
 

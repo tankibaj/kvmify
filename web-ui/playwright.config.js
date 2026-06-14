@@ -29,6 +29,9 @@ export default defineConfig({
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://192.168.178.101',
     headless: true,
+    // Grant Chromium's Local Network Access permission so the browser can reach
+    // the LAN-hosted UI under automation (otherwise net::ERR_ADDRESS_UNREACHABLE).
+    permissions: ['local-network-access'],
     launchOptions: { args: LNA_ARGS },
   },
   projects: [
