@@ -24,6 +24,7 @@ playwright-report/
 api/kvmify-settings.json
 api/image-sync-status.json
 api/image-sha256-cache.json
+seeds/
 
 # Editor / OS
 .DS_Store
