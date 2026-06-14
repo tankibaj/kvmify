@@ -8,8 +8,9 @@ test.describe('Templates feature', () => {
   test('Images page renders the VM Templates section', async ({ page }) => {
     await page.goto('/images')
     await expect(page.getByRole('heading', { name: 'VM Templates' })).toBeVisible()
-    // The base-images section still renders alongside it.
-    await expect(page.getByRole('heading', { name: 'Ubuntu Base Images' })).toBeVisible()
+    // The base-images section still renders alongside it (TopBar h1 + section h2
+    // both read "Base Images" — first() avoids the strict-mode multi-match).
+    await expect(page.getByRole('heading', { name: 'Base Images' }).first()).toBeVisible()
   })
 
   test('Provision form toggles image source between base image and template', async ({ page }) => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { Button, Input, Select, Slider, CopyButton } from '../ui'
-import { useNetworks, usePools, useProvisionVM, useTemplates } from '../../api/client'
+import { useNetworks, usePools, useProvisionVM, useTemplates, useImages } from '../../api/client'
 import NetworkConfig, { validateNetworkConfig } from './NetworkConfig'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -119,6 +119,7 @@ export default function ProvisionForm() {
   const { data: pools } = usePools()
   const provision = useProvisionVM()
   const { data: templates = [] } = useTemplates()
+  const { data: images = [] } = useImages()
 
   // Auto-select default pool
   useEffect(() => {
@@ -256,9 +257,17 @@ export default function ProvisionForm() {
                 value={form.ubuntu_version}
                 onChange={e => setForm(f => ({ ...f, ubuntu_version: e.target.value }))}
               >
-                <option value="2004">20.04 LTS Focal Fossa</option>
-                <option value="2204">22.04 LTS Jammy Jellyfish</option>
-                <option value="2404">24.04 LTS Noble Numbat</option>
+                {images.length === 0 ? (
+                  <>
+                    <option value="2004">20.04 LTS Focal Fossa</option>
+                    <option value="2204">22.04 LTS Jammy Jellyfish</option>
+                    <option value="2404">24.04 LTS Noble Numbat</option>
+                  </>
+                ) : (
+                  images.map(img => (
+                    <option key={img.version} value={img.version}>{img.label}</option>
+                  ))
+                )}
               </Select>
             ) : (
               <Select
@@ -560,7 +569,7 @@ export default function ProvisionForm() {
         </div>
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <SummaryRow label="VM Name" value={form.vm_name || '—'} />
-          <SummaryRow label="OS" value={form.source_type === 'base_image' ? (UBUNTU_LABELS[form.ubuntu_version] || '—') : (form.template_name || '— select template —')} />
+          <SummaryRow label="OS" value={form.source_type === 'base_image' ? (images.find(img => img.version === form.ubuntu_version)?.label || UBUNTU_LABELS[form.ubuntu_version] || '—') : (form.template_name || '— select template —')} />
           <SummaryRow label="CPU" value={`${form.cpu} vCPU`} />
           <SummaryRow label="Memory" value={formatRam(form.ram_mb)} />
           <SummaryRow label="Disk" value={`${form.disk_gb} GB`} />

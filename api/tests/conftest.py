@@ -104,6 +104,16 @@ def patch_libvirt(mock_conn: MagicMock):
 # Settings isolation
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _isolate_seed_dir(tmp_path, monkeypatch):
+    """Redirect SEED_DIR to a per-test temp dir.
+
+    vm_service writes/reads the os-variant sidecar and cleans seed inputs under
+    SEED_DIR; isolating it keeps tests from touching the host's real seeds dir.
+    """
+    monkeypatch.setattr(config, "SEED_DIR", str(tmp_path / "seeds"))
+
+
 @pytest.fixture()
 def tmp_settings(tmp_path, monkeypatch):
     """Redirect SETTINGS_PATH to a temp file for the duration of a test.

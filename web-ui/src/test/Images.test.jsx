@@ -45,6 +45,14 @@ vi.mock('../api/client', () => ({
     mutate: mockDeleteTemplateMutate,
     isPending: false,
   }),
+  useAddImage: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useDeleteImage: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
 }))
 
 // The sync status query is issued directly via useQuery inside Images — mock fetch

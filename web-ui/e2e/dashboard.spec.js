@@ -12,6 +12,12 @@ test.describe('Dashboard', () => {
     await expect(page.getByText('CPU').first()).toBeVisible()
     await expect(page.getByText('RAM').first()).toBeVisible()
     await expect(page.getByText('Disk').first()).toBeVisible()
+    // Sidebar shows absolute GB for RAM + Disk (regression: was "—/— GB").
+    await expect(page.getByText(/\d+(\.\d+)?\/\d+ GB/).first()).toBeVisible()
+
+    // Resource summary cards, including the CPU Allocated card.
+    await expect(page.getByText('RAM Allocated').first()).toBeVisible()
+    await expect(page.getByText('CPU Allocated').first()).toBeVisible()
 
     // VM table renders — either at least one VM row, or the empty state.
     // (No production VM name is hardcoded; the page just must not be blank.)

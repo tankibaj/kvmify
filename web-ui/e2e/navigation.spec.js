@@ -6,7 +6,7 @@ test.describe('Sidebar navigation', () => {
 
     await page.getByRole('link', { name: 'Images' }).click()
     await expect(page).toHaveURL(/\/images$/)
-    await expect(page.getByText('Ubuntu Base Images').first()).toBeVisible()
+    await expect(page.getByText('Base Images').first()).toBeVisible()
 
     await page.getByRole('link', { name: 'Pools' }).click()
     await expect(page).toHaveURL(/\/pools$/)

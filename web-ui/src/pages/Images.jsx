@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { RefreshCw, Loader2, Trash2 } from 'lucide-react'
+import { RefreshCw, Loader2, Trash2, Plus } from 'lucide-react'
 import TopBar from '../components/layout/TopBar'
 import { Button, Card, Badge, CopyButton, Modal } from '../components/ui'
-import { useImages, useSyncImages, useTemplates, useDeleteTemplate } from '../api/client'
+import { useImages, useSyncImages, useTemplates, useDeleteTemplate, useAddImage, useDeleteImage } from '../api/client'
 import { useNotify } from '../contexts/NotificationContext'
 
 function formatBytes(bytes) {
@@ -61,6 +61,12 @@ export default function Images() {
   const deleteTemplate = useDeleteTemplate()
   const [deleteTemplateTarget, setDeleteTemplateTarget] = useState(null)
 
+  const addImage = useAddImage()
+  const deleteImage = useDeleteImage()
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [addForm, setAddForm] = useState({ label: '', url: '', os_variant: '' })
+  const [deleteImageTarget, setDeleteImageTarget] = useState(null)
+
   const handleSyncAll = () => syncAllMutation.mutate()
 
   // Per-row sync reuses the same mutation, passing the version key in the body.
@@ -95,18 +101,29 @@ export default function Images() {
       <TopBar title="Base Images" />
       <div style={{ padding: '24px', maxWidth: '1100px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>Ubuntu Base Images</h2>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleSyncAll}
-            disabled={syncRunning || syncAllMutation.isPending}
-            loading={syncAllMutation.isPending}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            <RefreshCw size={14} />
-            Sync All
-          </Button>
+          <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#e2e8f0' }}>Base Images</h2>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAddModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Plus size={14} />
+              Add Base Image
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleSyncAll}
+              disabled={syncRunning || syncAllMutation.isPending}
+              loading={syncAllMutation.isPending}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <RefreshCw size={14} />
+              Sync All
+            </Button>
+          </div>
         </div>
 
         <Card style={{ overflow: 'hidden' }}>
@@ -170,17 +187,29 @@ export default function Images() {
                       </Badge>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleSyncOne(img.version)}
-                        disabled={syncRunning || !!syncingVersions[img.version]}
-                        loading={!!syncingVersions[img.version]}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                      >
-                        <RefreshCw size={12} />
-                        Sync
-                      </Button>
+                      {img.source === 'custom' ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteImageTarget(img.id)}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#f43f5e' }}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSyncOne(img.version)}
+                          disabled={syncRunning || !!syncingVersions[img.version]}
+                          loading={!!syncingVersions[img.version]}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <RefreshCw size={12} />
+                          Sync
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -329,6 +358,103 @@ export default function Images() {
             Permanently delete template{' '}
             <strong style={{ color: '#f43f5e', fontFamily: 'JetBrains Mono, monospace' }}>
               {deleteTemplateTarget}
+            </strong>
+            ? This cannot be undone.
+          </p>
+        </Modal>
+
+        {/* Add Base Image Modal */}
+        <Modal
+          isOpen={showAddModal}
+          onClose={() => { setShowAddModal(false); setAddForm({ label: '', url: '', os_variant: '' }) }}
+          title="Add Base Image"
+          footer={
+            <>
+              <Button variant="ghost" size="sm" onClick={() => { setShowAddModal(false); setAddForm({ label: '', url: '', os_variant: '' }) }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={addImage.isPending}
+                disabled={!addForm.label.trim() || !addForm.url.trim() || !addForm.os_variant.trim()}
+                onClick={() => addImage.mutate(
+                  { label: addForm.label, url: addForm.url, os_variant: addForm.os_variant },
+                  { onSuccess: () => { setShowAddModal(false); setAddForm({ label: '', url: '', os_variant: '' }) } }
+                )}
+              >
+                <Plus size={13} />
+                Add Image
+              </Button>
+            </>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#94a3b8', marginBottom: '4px' }}>
+                Label
+              </label>
+              <input
+                value={addForm.label}
+                onChange={e => setAddForm(f => ({ ...f, label: e.target.value }))}
+                placeholder="e.g. Debian 12"
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '8px', color: '#e2e8f0', fontSize: '13px', padding: '8px 12px', outline: 'none' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#94a3b8', marginBottom: '4px' }}>
+                Image URL
+              </label>
+              <input
+                value={addForm.url}
+                onChange={e => setAddForm(f => ({ ...f, url: e.target.value }))}
+                placeholder="https://cloud.debian.org/.../debian-12.qcow2"
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '8px', color: '#e2e8f0', fontSize: '13px', padding: '8px 12px', outline: 'none' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#94a3b8', marginBottom: '4px' }}>
+                OS Variant
+              </label>
+              <input
+                value={addForm.os_variant}
+                onChange={e => setAddForm(f => ({ ...f, os_variant: e.target.value }))}
+                placeholder="e.g. debian12 or ubuntu22.04"
+                style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '8px', color: '#e2e8f0', fontSize: '13px', padding: '8px 12px', outline: 'none' }}
+              />
+            </div>
+          </div>
+        </Modal>
+
+        {/* Delete Custom Image Confirm Modal */}
+        <Modal
+          isOpen={!!deleteImageTarget}
+          onClose={() => setDeleteImageTarget(null)}
+          title="Delete Custom Image"
+          footer={
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setDeleteImageTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                loading={deleteImage.isPending}
+                onClick={() => deleteImage.mutate(
+                  { id: deleteImageTarget },
+                  { onSuccess: () => setDeleteImageTarget(null) }
+                )}
+              >
+                <Trash2 size={13} />
+                Delete
+              </Button>
+            </>
+          }
+        >
+          <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8', lineHeight: 1.6 }}>
+            Permanently delete custom image{' '}
+            <strong style={{ color: '#f43f5e', fontFamily: 'JetBrains Mono, monospace' }}>
+              {deleteImageTarget}
             </strong>
             ? This cannot be undone.
           </p>

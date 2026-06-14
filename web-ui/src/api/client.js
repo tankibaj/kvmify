@@ -198,6 +198,23 @@ export function useUpdateVMNetwork() {
   })
 }
 
+export function usePatchVM() {
+  const qc = useQueryClient()
+  const notify = useNotify()
+  return useMutation({
+    // Non-resource VM settings (currently: autostart).
+    mutationFn: ({ name, ...data }) => apiFetch(`/vms/${name}`, { method: 'PATCH', body: data }),
+    onSuccess: (_, { name, autostart }) => {
+      if (autostart !== undefined) {
+        notify.success(`Autostart ${autostart ? 'enabled' : 'disabled'} for ${name}`)
+      }
+      qc.invalidateQueries({ queryKey: ['vm', name] })
+      qc.invalidateQueries({ queryKey: ['vms'] })
+    },
+    onError: (err) => notify.error(err.message),
+  })
+}
+
 export function useCreateSnapshot() {
   const qc = useQueryClient()
   const notify = useNotify()
@@ -321,6 +338,32 @@ export function useDeleteTemplate() {
   return useMutation({
     mutationFn: ({ name }) => apiFetch(`/templates/${name}`, { method: 'DELETE' }),
     onSuccess: () => { notify.success('Template deleted'); qc.invalidateQueries({ queryKey: ['templates'] }) },
+    onError: (err) => notify.error(err.message),
+  })
+}
+
+export function useAddImage() {
+  const qc = useQueryClient()
+  const notify = useNotify()
+  return useMutation({
+    mutationFn: (data) => apiFetch('/images', { method: 'POST', body: data }),
+    onSuccess: () => {
+      notify.success('Base image added — downloading')
+      qc.invalidateQueries({ queryKey: ['images'] })
+    },
+    onError: (err) => notify.error(err.message),
+  })
+}
+
+export function useDeleteImage() {
+  const qc = useQueryClient()
+  const notify = useNotify()
+  return useMutation({
+    mutationFn: ({ id }) => apiFetch(`/images/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      notify.success('Custom image deleted')
+      qc.invalidateQueries({ queryKey: ['images'] })
+    },
     onError: (err) => notify.error(err.message),
   })
 }

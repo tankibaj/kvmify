@@ -1,21 +1,39 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useStartVM, useStopVM, useRestartVM, useDeleteVM } from '../../api/client'
+import { useStartVM, useStopVM, useRestartVM, useDeleteVM, usePatchVM } from '../../api/client'
 import { Card, Button, Badge, StatusDot, CopyButton, Modal } from '../ui'
 import VMStats from './VMStats'
+import { formatUptime } from './VMTable'
 import { Play, Square, RotateCcw, Trash2 } from 'lucide-react'
 
-function formatDate(iso) {
-  if (!iso) return '—'
-  try {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }).format(new Date(iso))
-  } catch {
-    return iso
-  }
+function AutostartToggle({ enabled, onClick, disabled }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={enabled ? 'Autostart enabled — click to disable' : 'Autostart disabled — click to enable'}
+      style={{
+        width: '32px', height: '18px',
+        background: enabled ? 'rgba(99,102,241,0.3)' : '#1e1e2e',
+        border: `1px solid ${enabled ? '#6366f1' : '#2e2e4e'}`,
+        borderRadius: '9px',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        position: 'relative',
+        transition: 'all 150ms ease',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <span style={{
+        position: 'absolute',
+        top: '2px',
+        left: enabled ? '14px' : '2px',
+        width: '12px', height: '12px',
+        background: enabled ? '#6366f1' : '#475569',
+        borderRadius: '50%',
+        transition: 'left 150ms ease',
+      }} />
+    </button>
+  )
 }
 
 function MetaRow({ label, children }) {
@@ -60,6 +78,7 @@ export default function VMOverview({ vm }) {
   const stopVM = useStopVM()
   const restartVM = useRestartVM()
   const deleteVM = useDeleteVM()
+  const patchVM = usePatchVM()
 
   const [showDeleteModal, setShowDeleteModal] = useState(false)
 
@@ -104,8 +123,8 @@ export default function VMOverview({ vm }) {
             <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>{name}</span>
           </MetaRow>
           <MetaRow label="OS">
-            {vm?.os ? (
-              <Badge variant="default">{vm.os}</Badge>
+            {vm?.os_variant ? (
+              <Badge variant="default">{vm.os_variant}</Badge>
             ) : (
               <span style={{ color: '#475569' }}>—</span>
             )}
@@ -116,6 +135,11 @@ export default function VMOverview({ vm }) {
               <span style={{ textTransform: 'capitalize' }}>{vm?.state ?? '—'}</span>
             </div>
           </MetaRow>
+          <MetaRow label="Uptime">
+            <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+              {isRunning ? formatUptime(vm?.uptime) : '—'}
+            </span>
+          </MetaRow>
           <MetaRow label="IP Address">
             {vm?.ip ? (
               <CopyButton text={vm.ip} label={vm.ip} />
@@ -123,8 +147,12 @@ export default function VMOverview({ vm }) {
               <span style={{ color: '#475569' }}>—</span>
             )}
           </MetaRow>
-          <MetaRow label="Created">
-            <span>{formatDate(vm?.created)}</span>
+          <MetaRow label="Autostart">
+            <AutostartToggle
+              enabled={!!vm?.autostart}
+              disabled={patchVM.isPending || !name}
+              onClick={() => patchVM.mutate({ name, autostart: !vm?.autostart })}
+            />
           </MetaRow>
         </Card>
 

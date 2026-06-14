@@ -8,6 +8,7 @@ LIBVIRT_URI: str = os.getenv("KVMIFY_LIBVIRT_URI", "qemu:///system")
 BASE_IMAGE_DIR: str = os.getenv("KVMIFY_BASE_DIR", "/mnt/nvme1/kvm/pool/base")
 TEMPLATES_DIR: str = os.getenv("KVMIFY_TEMPLATES_DIR", "/mnt/nvme1/kvm/pool/templates")
 EXPORT_SCRIPT: str = os.getenv("KVMIFY_EXPORT_SCRIPT", "/usr/local/bin/export-vm-snapshot.sh")
+DOWNLOAD_SCRIPT: str = os.getenv("KVMIFY_DOWNLOAD_SCRIPT", "/usr/local/bin/download-base-image.sh")
 
 # Path to KVMify's own settings file (persists default_pool, etc.)
 SETTINGS_PATH: str = os.getenv(

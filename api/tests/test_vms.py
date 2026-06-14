@@ -82,6 +82,8 @@ def _make_mock_domain(
     domain.setVcpusFlags = MagicMock(return_value=0)
     domain.setMemoryFlags = MagicMock(return_value=0)
     domain.blockResize = MagicMock(return_value=0)
+    domain.autostart.return_value = 0
+    domain.setAutostart = MagicMock(return_value=0)
     domain.detachDeviceFlags = MagicMock(return_value=0)
     domain.attachDeviceFlags = MagicMock(return_value=0)
     domain.getCPUStats = MagicMock(return_value=[{"cpu_time": 1000000}])
@@ -647,6 +649,133 @@ def test_delete_vm_not_found(client: TestClient, patch_libvirt, mock_conn):
     assert resp.status_code == 404
 
 
+def test_delete_vm_removes_seed_files(client: TestClient, patch_libvirt, mock_conn):
+    """DELETE cleans the cloud-init seed inputs + os-variant sidecar in SEED_DIR.
+
+    Regression for the leak where these files were left behind on every delete.
+    """
+    domain = _make_mock_domain("clean-vm", state=libvirt.VIR_DOMAIN_SHUTOFF)
+    mock_conn.lookupByName.return_value = domain
+    mock_conn.storageVolLookupByPath.side_effect = libvirt.libvirtError("not found")
+
+    os.makedirs(config.SEED_DIR, exist_ok=True)
+    files = [
+        os.path.join(config.SEED_DIR, "clean-vm-user-data.yaml"),
+        os.path.join(config.SEED_DIR, "clean-vm-network-config.yaml"),
+        os.path.join(config.SEED_DIR, "clean-vm.json"),
+    ]
+    for p in files:
+        with open(p, "w") as fh:
+            fh.write("x")
+
+    resp = client.delete("/vms/clean-vm")
+    assert resp.status_code == 204
+    for p in files:
+        assert not os.path.exists(p), f"{p} leaked"
+
+
+def test_delete_vm_undefine_flags_include_nvram_and_snapshots(
+    client: TestClient, patch_libvirt, mock_conn
+):
+    """DELETE undefines with NVRAM + snapshots-metadata flags so nothing leaks."""
+    domain = _make_mock_domain("flag-vm", state=libvirt.VIR_DOMAIN_SHUTOFF)
+    mock_conn.lookupByName.return_value = domain
+    mock_conn.storageVolLookupByPath.side_effect = libvirt.libvirtError("x")
+
+    resp = client.delete("/vms/flag-vm")
+    assert resp.status_code == 204
+    flags = domain.undefineFlags.call_args[0][0]
+    assert flags & libvirt.VIR_DOMAIN_UNDEFINE_NVRAM
+    assert flags & libvirt.VIR_DOMAIN_UNDEFINE_SNAPSHOTS_METADATA
+
+
+# ---------------------------------------------------------------------------
+# 11b. VM metadata: uptime, os_variant, autostart
+# ---------------------------------------------------------------------------
+
+def test_list_vms_includes_metadata_fields(client: TestClient, patch_libvirt, mock_conn):
+    """GET /vms items expose uptime, os_variant, and autostart keys."""
+    d = _make_mock_domain("meta-vm")
+    mock_conn.listAllDomains.return_value = [d]
+    item = client.get("/vms").json()[0]
+    assert "uptime" in item
+    assert "os_variant" in item
+    assert "autostart" in item
+
+
+def test_get_vm_reads_os_variant_sidecar(client: TestClient, patch_libvirt, mock_conn):
+    """GET /vms/{name} returns os_variant from the SEED_DIR sidecar."""
+    domain = _make_mock_domain("os-vm")
+    mock_conn.lookupByName.return_value = domain
+    os.makedirs(config.SEED_DIR, exist_ok=True)
+    with open(os.path.join(config.SEED_DIR, "os-vm.json"), "w") as fh:
+        fh.write('{"os_variant": "ubuntu24.04"}')
+
+    resp = client.get("/vms/os-vm")
+    assert resp.status_code == 200
+    assert resp.json()["os_variant"] == "ubuntu24.04"
+
+
+def test_get_vm_autostart_reflected(client: TestClient, patch_libvirt, mock_conn):
+    """GET /vms/{name} reflects the domain autostart flag."""
+    domain = _make_mock_domain("auto-vm")
+    domain.autostart.return_value = 1
+    mock_conn.lookupByName.return_value = domain
+
+    resp = client.get("/vms/auto-vm")
+    assert resp.status_code == 200
+    assert resp.json()["autostart"] is True
+
+
+def test_patch_vm_autostart_enable(client: TestClient, patch_libvirt, mock_conn):
+    """PATCH /vms/{name} {autostart:true} calls domain.setAutostart(1)."""
+    domain = _make_mock_domain("auto-vm")
+    mock_conn.lookupByName.return_value = domain
+
+    resp = client.patch("/vms/auto-vm", json={"autostart": True})
+    assert resp.status_code == 200
+    domain.setAutostart.assert_called_once_with(1)
+
+
+def test_patch_vm_autostart_disable(client: TestClient, patch_libvirt, mock_conn):
+    """PATCH /vms/{name} {autostart:false} calls domain.setAutostart(0)."""
+    domain = _make_mock_domain("auto-vm")
+    mock_conn.lookupByName.return_value = domain
+
+    resp = client.patch("/vms/auto-vm", json={"autostart": False})
+    assert resp.status_code == 200
+    domain.setAutostart.assert_called_once_with(0)
+
+
+def test_patch_vm_not_found(client: TestClient, patch_libvirt, mock_conn):
+    """PATCH /vms/{name} returns 404 for an unknown VM."""
+    mock_conn.lookupByName.side_effect = libvirt.libvirtError("Domain not found")
+    resp = client.patch("/vms/ghost", json={"autostart": True})
+    assert resp.status_code == 404
+
+
+def test_qemu_pid_map_and_uptime(monkeypatch):
+    """_qemu_pid_map parses the QEMU 'guest=' arg; _uptime_from_pid derives seconds."""
+    from api.services import vm_service
+
+    fake_proc = MagicMock()
+    fake_proc.info = {
+        "pid": 4242,
+        "cmdline": ["qemu-system-x86_64", "-name", "guest=up-vm,debug-threads=on"],
+    }
+    monkeypatch.setattr(
+        "api.services.vm_service.psutil.process_iter", lambda attrs=None: [fake_proc]
+    )
+    assert vm_service._qemu_pid_map().get("up-vm") == 4242
+
+    proc = MagicMock()
+    proc.create_time.return_value = 1000.0
+    monkeypatch.setattr("api.services.vm_service.psutil.Process", lambda pid: proc)
+    monkeypatch.setattr("api.services.vm_service.time.time", lambda: 1100.0)
+    assert vm_service._uptime_from_pid(4242) == 100
+    assert vm_service._uptime_from_pid(None) is None
+
+
 # ---------------------------------------------------------------------------
 # 12. PATCH /vms/{name}/resize — CPU+RAM on running VM → 409
 # ---------------------------------------------------------------------------
@@ -929,3 +1058,73 @@ def test_provision_template_without_name_returns_422(client: TestClient, patch_l
         # template_name omitted
     })
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Custom image key in provision
+# ---------------------------------------------------------------------------
+
+def test_provision_with_custom_image_key(
+    client: TestClient, patch_libvirt, mock_conn, tmp_path, tmp_settings
+):
+    """POST /provision with a custom image key resolves path + os_variant from catalogue."""
+    from api.services import settings_service
+
+    # Write a custom image entry to settings
+    entry = {
+        "id": "debian-12",
+        "label": "Debian 12",
+        "url": "https://example.com/debian-12.qcow2",
+        "os_variant": "debian12",
+        "filename": "custom-debian-12.qcow2",
+    }
+    settings_service.add_custom_image(entry)
+
+    mock_domain = _make_mock_domain("custom-vm")
+    mock_conn.lookupByName.side_effect = [
+        libvirt.libvirtError("not found"),
+        mock_domain,
+    ]
+    mock_pool = MagicMock()
+    mock_pool.isActive.return_value = True
+    mock_pool.info.return_value = [1, 500 * 1024**3, 10 * 1024**3, 490 * 1024**3]
+    mock_pool.XMLDesc.return_value = "<pool type='dir'><target><path>/mnt/pool</path></target></pool>"
+    mock_pool.refresh = MagicMock()
+    mock_conn.storagePoolLookupByName.side_effect = None
+    mock_conn.storagePoolLookupByName.return_value = mock_pool
+
+    fake_proc = MagicMock()
+    fake_proc.stdout = "VM provisioned"
+    fake_proc.returncode = 0
+
+    seed_ud = str(tmp_path / "custom-vm-user-data.yaml")
+
+    with (
+        patch(BASE_IMG_EXISTS_PATCH, return_value=True),
+        patch(SUBPROCESS_PATCH, return_value=fake_proc) as mock_sub,
+        patch("api.services.cloudinit_service.write_seed_inputs", return_value=(seed_ud, None)),
+        patch("api.services.cloudinit_service.render_user_data", return_value="#cloud-config\n"),
+        patch(SETTINGS_DEFAULT_POOL_PATCH, return_value="default"),
+        patch("api.services.vm_service.time") as mock_time,
+    ):
+        mock_time.time.side_effect = [0, 0, 200]
+        mock_time.sleep = MagicMock()
+
+        resp = client.post("/vms/provision", json={
+            "vm_name": "custom-vm",
+            "ubuntu_version": "debian-12",  # custom image id
+            "cpu": 2,
+            "ram_mb": 2048,
+            "disk_gb": 20,
+            "ssh_public_key": "ssh-rsa AAAA...",
+            "network": "public",
+            "ip_mode": "dhcp",
+        })
+
+    assert resp.status_code == 201
+
+    call_args = mock_sub.call_args[0][0]
+    # arg index 3 = base_img_path must contain the custom qcow2 filename
+    assert "custom-debian-12.qcow2" in call_args[3]
+    # arg index 9 = os_variant must be the custom os_variant
+    assert call_args[9] == "debian12"

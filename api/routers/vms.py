@@ -110,6 +110,18 @@ def delete_vm(name: str) -> None:
         raise _map_error(exc)
 
 
+@router.patch("/{name}")
+def patch_vm(name: str, req: schemas.VMAction) -> dict:
+    """Update non-resource VM settings (currently: autostart)."""
+    try:
+        with libvirt_service.connection() as conn:
+            if req.autostart is not None:
+                vm_service.set_autostart(conn, name, req.autostart)
+    except ValueError as exc:
+        raise _map_error(exc)
+    return {"message": f"VM '{name}' updated"}
+
+
 @router.patch("/{name}/resize")
 def resize_vm(name: str, req: schemas.ResizeRequest) -> dict:
     """Resize vCPUs, RAM, and/or disk for a VM."""

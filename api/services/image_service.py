@@ -25,6 +25,7 @@ from urllib.error import URLError
 
 from api import config
 from api.schemas import ImageInfo, SyncStatus
+from api.services import settings_service
 
 # ---------------------------------------------------------------------------
 # Version catalogue
@@ -133,6 +134,8 @@ def list_images() -> list[ImageInfo]:
                 size=None,
                 last_updated=None,
                 checksum=None,
+                id=key,
+                source="ubuntu",
             ))
             continue
 
@@ -159,9 +162,132 @@ def list_images() -> list[ImageInfo]:
             size=size,
             last_updated=last_updated,
             checksum=local_sha,
+            id=key,
+            source="ubuntu",
+        ))
+
+    # Custom images from settings
+    for entry in settings_service.get_custom_images():
+        path = os.path.join(config.BASE_IMAGE_DIR, entry["filename"])
+        if os.path.exists(path):
+            stat = os.stat(path)
+            size = stat.st_size
+            last_updated = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+            status = "up_to_date"
+        else:
+            size = None
+            last_updated = None
+            status = "missing"
+        results.append(ImageInfo(
+            version=entry["id"],
+            codename="custom",
+            label=entry["label"],
+            status=status,
+            size=size,
+            last_updated=last_updated,
+            checksum=None,
+            id=entry["id"],
+            source="custom",
+            os_variant=entry["os_variant"],
+            url=entry["url"],
         ))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Public API — custom image management
+# ---------------------------------------------------------------------------
+
+def add_custom_image(label: str, url: str, os_variant: str) -> dict:
+    """Add a custom base image entry to settings and launch the download script.
+
+    Args:
+        label: Human-readable label for the image.
+        url: URL to download the image from.
+        os_variant: virt-install os-variant string.
+
+    Returns:
+        The entry dict that was persisted.
+
+    Raises:
+        ValueError: if the id is invalid, collides with a built-in, or already exists.
+    """
+    import re as _re
+
+    # Slugify label → id
+    slug = label.strip().lower()
+    slug = _re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+    if not slug or not _re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", slug):
+        raise ValueError(f"Label '{label}' produces invalid id '{slug}'")
+
+    # Check collision with built-in keys
+    if slug in VALID_VERSIONS:
+        raise ValueError(f"Image id '{slug}' collides with a built-in Ubuntu version")
+
+    # Check collision with existing custom ids
+    existing = settings_service.get_custom_images()
+    if any(e["id"] == slug for e in existing):
+        raise ValueError(f"Custom image with id '{slug}' already exists")
+
+    filename = f"custom-{slug}.qcow2"
+    entry = {
+        "id": slug,
+        "label": label.strip(),
+        "url": url,
+        "os_variant": os_variant.strip(),
+        "filename": filename,
+    }
+    settings_service.add_custom_image(entry)
+
+    dest_path = os.path.join(config.BASE_IMAGE_DIR, filename)
+    _launch_subprocess(["sudo", config.DOWNLOAD_SCRIPT, url, dest_path])
+
+    return entry
+
+
+def delete_custom_image(image_id: str) -> None:
+    """Delete a custom image entry and best-effort remove its file.
+
+    Raises:
+        LookupError: if the image_id is not found in custom images.
+    """
+    existing = settings_service.get_custom_images()
+    entry = next((e for e in existing if e["id"] == image_id), None)
+    if entry is None:
+        raise LookupError(f"Custom image '{image_id}' not found")
+
+    # Best-effort file removal
+    path = os.path.join(config.BASE_IMAGE_DIR, entry["filename"])
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+    settings_service.delete_custom_image(image_id)
+
+
+def resolve_base_image(key: str) -> tuple[str, str]:
+    """Resolve a base image key to (abs_image_path, os_variant).
+
+    Args:
+        key: built-in version key ('2004'/'2204'/'2404') or custom image id.
+
+    Returns:
+        Tuple of (absolute_image_path, os_variant_string).
+
+    Raises:
+        ValueError: if the key is not found in built-ins or custom images.
+    """
+    if key in _VERSIONS:
+        return (_image_path(key), config.OS_VARIANTS[key])
+
+    custom = settings_service.get_custom_images()
+    entry = next((e for e in custom if e["id"] == key), None)
+    if entry is not None:
+        return (os.path.join(config.BASE_IMAGE_DIR, entry["filename"]), entry["os_variant"])
+
+    raise ValueError(f"Unknown base image '{key}'")
 
 
 # ---------------------------------------------------------------------------

@@ -269,3 +269,156 @@ def test_sync_flow_post_then_status(client: TestClient, tmp_image_paths):
     resp = client.get("/images/sync/status")
     assert resp.status_code == 200
     assert resp.json()["state"] == "running"
+
+
+# ---------------------------------------------------------------------------
+# Custom images — POST /images
+# ---------------------------------------------------------------------------
+
+def test_add_custom_image_returns_201(client: TestClient, tmp_image_paths, tmp_settings):
+    """POST /images with valid body returns 201 and the entry dict."""
+    with patch("api.services.image_service._launch_subprocess") as mock_launch:
+        resp = client.post("/images", json={
+            "label": "Debian 12",
+            "url": "https://example.com/debian-12.qcow2",
+            "os_variant": "debian12",
+        })
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["id"] == "debian-12"
+    assert data["label"] == "Debian 12"
+    assert data["url"] == "https://example.com/debian-12.qcow2"
+    assert data["os_variant"] == "debian12"
+    assert data["filename"] == "custom-debian-12.qcow2"
+
+    # _launch_subprocess called with sudo + DOWNLOAD_SCRIPT + url + dest
+    mock_launch.assert_called_once()
+    cmd = mock_launch.call_args[0][0]
+    assert cmd[0] == "sudo"
+    assert "download-base-image.sh" in cmd[1]
+    assert cmd[2] == "https://example.com/debian-12.qcow2"
+    assert "custom-debian-12.qcow2" in cmd[3]
+
+
+def test_add_custom_image_appears_in_list(client: TestClient, tmp_image_paths, tmp_settings):
+    """After POST /images, GET /images includes the custom image with source=='custom'."""
+    with patch("api.services.image_service._launch_subprocess"):
+        client.post("/images", json={
+            "label": "Debian 12",
+            "url": "https://example.com/debian-12.qcow2",
+            "os_variant": "debian12",
+        })
+
+    with patch("api.services.image_service._fetch_upstream_sha256", return_value=None):
+        resp = client.get("/images")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    custom = [img for img in data if img.get("source") == "custom"]
+    assert len(custom) == 1
+    assert custom[0]["id"] == "debian-12"
+    assert custom[0]["source"] == "custom"
+    assert custom[0]["status"] == "missing"  # file not present on disk
+
+
+def test_add_custom_image_status_up_to_date_when_file_exists(client: TestClient, tmp_image_paths, tmp_settings):
+    """GET /images shows 'up_to_date' for a custom image when its file exists."""
+    from api import config
+
+    # Add the custom image entry
+    with patch("api.services.image_service._launch_subprocess"):
+        client.post("/images", json={
+            "label": "Debian 12",
+            "url": "https://example.com/debian-12.qcow2",
+            "os_variant": "debian12",
+        })
+
+    # Create the file
+    img_path = os.path.join(config.BASE_IMAGE_DIR, "custom-debian-12.qcow2")
+    with open(img_path, "wb") as f:
+        f.write(b"\x00" * 1024)
+
+    with patch("api.services.image_service._fetch_upstream_sha256", return_value=None):
+        resp = client.get("/images")
+
+    custom = [img for img in resp.json() if img.get("source") == "custom"]
+    assert custom[0]["status"] == "up_to_date"
+    assert custom[0]["size"] is not None
+
+
+def test_add_custom_image_duplicate_id_returns_409(client: TestClient, tmp_image_paths, tmp_settings):
+    """POST /images with a label that produces the same id as an existing custom image returns 409."""
+    with patch("api.services.image_service._launch_subprocess"):
+        client.post("/images", json={
+            "label": "Debian 12",
+            "url": "https://example.com/debian-12.qcow2",
+            "os_variant": "debian12",
+        })
+
+    # Same label again → same id collision
+    with patch("api.services.image_service._launch_subprocess"):
+        resp = client.post("/images", json={
+            "label": "Debian 12",
+            "url": "https://example.com/other.qcow2",
+            "os_variant": "debian12",
+        })
+
+    assert resp.status_code == 409
+
+
+def test_add_custom_image_collision_with_builtin_returns_409_or_400(client: TestClient, tmp_image_paths, tmp_settings):
+    """POST /images with a label that slugifies to a built-in key (e.g. '2204') returns 409 or 400."""
+    with patch("api.services.image_service._launch_subprocess"):
+        resp = client.post("/images", json={
+            "label": "2204",
+            "url": "https://example.com/img.qcow2",
+            "os_variant": "ubuntu22.04",
+        })
+
+    assert resp.status_code in (400, 409)
+
+
+def test_add_custom_image_invalid_url_returns_422(client: TestClient, tmp_image_paths, tmp_settings):
+    """POST /images with a non-http(s) URL returns 422 (Pydantic validation)."""
+    resp = client.post("/images", json={
+        "label": "Bad Image",
+        "url": "ftp://example.com/img.qcow2",
+        "os_variant": "debian12",
+    })
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Custom images — DELETE /images/{id}
+# ---------------------------------------------------------------------------
+
+def test_delete_custom_image_returns_204(client: TestClient, tmp_image_paths, tmp_settings):
+    """DELETE /images/{id} returns 204 and removes the entry from settings."""
+    from api.services import settings_service
+
+    with patch("api.services.image_service._launch_subprocess"):
+        client.post("/images", json={
+            "label": "Debian 12",
+            "url": "https://example.com/debian-12.qcow2",
+            "os_variant": "debian12",
+        })
+
+    with patch("api.services.image_service.os.remove"):
+        resp = client.delete("/images/debian-12")
+
+    assert resp.status_code == 204
+    remaining = settings_service.get_custom_images()
+    assert not any(e["id"] == "debian-12" for e in remaining)
+
+
+def test_delete_builtin_image_returns_400(client: TestClient, tmp_image_paths, tmp_settings):
+    """DELETE /images/2204 returns 400 (cannot delete built-in)."""
+    resp = client.delete("/images/2204")
+    assert resp.status_code == 400
+
+
+def test_delete_unknown_custom_image_returns_404(client: TestClient, tmp_image_paths, tmp_settings):
+    """DELETE /images/nonexistent returns 404."""
+    resp = client.delete("/images/nonexistent-image")
+    assert resp.status_code == 404

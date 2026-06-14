@@ -11,6 +11,17 @@ function getOsBadgeStyle(os) {
   return {}
 }
 
+export function formatUptime(seconds) {
+  if (seconds == null) return '—'
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m`
+  return `${seconds}s`
+}
+
 function stateLabel(state) {
   switch (state) {
     case 'running':
@@ -137,9 +148,9 @@ export default function VMTable({ vms }) {
 
                 {/* OS */}
                 <td style={tdStyle}>
-                  {vm.os ? (
+                  {vm.os_variant ? (
                     <Badge variant="default">
-                      <span style={getOsBadgeStyle(vm.os)}>{vm.os}</span>
+                      <span style={getOsBadgeStyle(vm.os_variant)}>{vm.os_variant}</span>
                     </Badge>
                   ) : (
                     <span style={{ color: '#64748b', fontSize: 13 }}>—</span>
@@ -178,7 +189,7 @@ export default function VMTable({ vms }) {
 
                 {/* Uptime */}
                 <td style={{ ...tdStyle, fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}>
-                  {vm.uptime ?? '—'}
+                  {formatUptime(vm.uptime)}
                 </td>
 
                 {/* Actions */}

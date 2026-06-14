@@ -59,3 +59,25 @@ def set_default_pool(name: str) -> None:
     data = _read()
     data["default_pool"] = name
     _write(data)
+
+
+def get_custom_images() -> list[dict]:
+    """Return the list of custom base image entries."""
+    return _read().get("custom_images", [])
+
+
+def add_custom_image(entry: dict) -> None:
+    """Append a custom image entry and persist to settings file."""
+    data = _read()
+    data.setdefault("custom_images", [])
+    data["custom_images"].append(entry)
+    _write(data)
+
+
+def delete_custom_image(image_id: str) -> None:
+    """Remove the custom image entry with the given id and persist."""
+    data = _read()
+    data["custom_images"] = [
+        e for e in data.get("custom_images", []) if e.get("id") != image_id
+    ]
+    _write(data)

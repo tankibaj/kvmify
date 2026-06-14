@@ -82,6 +82,10 @@ class ImageInfo(BaseModel):
     size: Optional[int] = Field(None, description="Local file size in bytes")
     last_updated: Optional[str] = Field(None, description="ISO-8601 mtime of local file")
     checksum: Optional[str] = Field(None, description="SHA-256 hex digest of local file")
+    id: Optional[str] = Field(None, description="Image id/key")
+    source: Optional[str] = Field(None, description="'ubuntu' or 'custom'")
+    os_variant: Optional[str] = Field(None, description="virt-install os-variant string")
+    url: Optional[str] = Field(None, description="Download URL for custom images")
 
 
 class SyncRequest(BaseModel):
@@ -101,6 +105,39 @@ class SyncStatus(BaseModel):
     finished_at: Optional[str] = Field(None, description="ISO-8601 timestamp when sync finished")
     returncode: Optional[int] = Field(None, description="Exit code of the sync script")
     log: Optional[str] = Field(None, description="Captured stdout/stderr from the sync script")
+
+
+class CustomImageCreate(BaseModel):
+    """Request body for POST /images — add a custom base image by URL."""
+
+    label: str = Field(..., description="Human-readable label, max 64 chars")
+    url: str = Field(..., description="URL to download the image (http:// or https://)")
+    os_variant: str = Field(..., description="virt-install os-variant string, e.g. 'debian12'")
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("label must not be empty")
+        if len(v) > 64:
+            raise ValueError("label must be 64 characters or fewer")
+        return v
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not v.startswith("http://") and not v.startswith("https://"):
+            raise ValueError("url must start with http:// or https://")
+        return v
+
+    @field_validator("os_variant")
+    @classmethod
+    def validate_os_variant(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("os_variant must not be empty")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +220,9 @@ class VMSummary(BaseModel):
     ram_mb: int
     ip: Optional[str] = None
     network: Optional[str] = None
-    uptime: Optional[int] = None  # seconds since boot (best-effort)
+    uptime: Optional[int] = None  # seconds since the QEMU process started (best-effort)
+    os_variant: Optional[str] = None  # e.g. "ubuntu22.04" (best-effort, from sidecar)
+    autostart: Optional[bool] = None  # True if the domain starts on host boot
 
 
 class VMDetail(VMSummary):
@@ -194,7 +233,14 @@ class VMDetail(VMSummary):
     ram_total_mb: Optional[int] = None
     disk_gb: Optional[int] = None
     vnc_port: Optional[int] = None
-    os_variant: Optional[str] = None
+
+
+class VMAction(BaseModel):
+    """Request body for PATCH /vms/{name} — non-resource VM settings."""
+
+    autostart: Optional[bool] = Field(
+        None, description="Set or clear the domain autostart flag"
+    )
 
 
 class ResizeRequest(BaseModel):
@@ -279,12 +325,17 @@ class TemplateExportRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class HostStats(BaseModel):
-    """Host-level resource utilisation percentages."""
+    """Host-level resource utilisation: percentages plus absolute GB."""
 
     cpu_percent: float
     ram_percent: float
     disk_percent: float
     pool_percent: Optional[float] = None
+    ram_used_gb: Optional[float] = None
+    ram_total_gb: Optional[float] = None
+    disk_used_gb: Optional[float] = None
+    disk_total_gb: Optional[float] = None
+    host_cpu_count: Optional[int] = None  # logical CPUs — denominator for vCPU allocation
 
 
 # ---------------------------------------------------------------------------

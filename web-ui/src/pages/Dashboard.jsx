@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import TopBar from '../components/layout/TopBar'
 import { Card, Button } from '../components/ui'
-import { useVMs } from '../api/client'
+import { useVMs, useHostStats } from '../api/client'
 import VMTable from '../components/vm/VMTable'
 
 function StatCard({ label, value, sub }) {
@@ -35,6 +35,7 @@ function StatCard({ label, value, sub }) {
 
 export default function Dashboard() {
   const { data: vms, isLoading } = useVMs()
+  const { data: host } = useHostStats()
 
   const totalVMs = vms?.length ?? 0
   const running = vms?.filter(v => v.state === 'running').length ?? 0
@@ -42,6 +43,8 @@ export default function Dashboard() {
   const totalRamGB = vms
     ? (vms.reduce((sum, v) => sum + (v.ram_mb ?? 0), 0) / 1024).toFixed(1)
     : '0.0'
+  const totalVcpus = vms ? vms.reduce((sum, v) => sum + (v.vcpus ?? 0), 0) : 0
+  const hostCpus = host?.host_cpu_count
 
   return (
     <div>
@@ -96,6 +99,11 @@ export default function Dashboard() {
             label="RAM Allocated"
             value={isLoading ? '—' : `${totalRamGB} GB`}
             sub="Total across all VMs"
+          />
+          <StatCard
+            label="CPU Allocated"
+            value={isLoading ? '—' : (hostCpus ? `${totalVcpus} / ${hostCpus}` : totalVcpus)}
+            sub={hostCpus ? 'vCPUs / physical cores' : 'vCPUs across all VMs'}
           />
         </div>
 

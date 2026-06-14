@@ -29,6 +29,15 @@ vi.mock('../api/client', () => {
         { name: 'dev-template', source_vm: 'dev-vm', source_snapshot: null },
       ],
     }),
+    useImages: () => ({
+      data: [
+        { version: '2004', label: 'Ubuntu 20.04 LTS', source: 'ubuntu', id: '2004' },
+        { version: '2204', label: 'Ubuntu 22.04 LTS', source: 'ubuntu', id: '2204' },
+        { version: '2404', label: 'Ubuntu 24.04 LTS', source: 'ubuntu', id: '2404' },
+        { version: 'debian-12', label: 'Debian 12', source: 'custom', id: 'debian-12' },
+      ],
+      isLoading: false,
+    }),
   }
 })
 
@@ -202,5 +211,20 @@ describe('ProvisionForm — image source selector', () => {
       expect(screen.getByText(/ubuntu-22-base/i)).toBeInTheDocument()
       expect(screen.getByText(/dev-template/i)).toBeInTheDocument()
     })
+  })
+})
+
+// ─── Image dropdown from useImages ───────────────────────────────────────────
+
+describe('ProvisionForm — image dropdown from useImages', () => {
+  it('lists all images from useImages in the Ubuntu Version select', async () => {
+    renderWithProviders(<ProvisionForm />)
+    const select = screen.getByLabelText(/ubuntu version/i)
+    expect(select).toBeInTheDocument()
+    // All 4 options from mocked useImages should be present
+    expect(screen.getByRole('option', { name: /ubuntu 20.04/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /ubuntu 22.04/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /ubuntu 24.04/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /debian 12/i })).toBeInTheDocument()
   })
 })

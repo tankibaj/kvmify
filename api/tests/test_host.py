@@ -14,15 +14,22 @@ from fastapi.testclient import TestClient
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_disk_usage(percent: float) -> MagicMock:
+_GB = 1024 ** 3
+
+
+def _make_disk_usage(percent: float, used_gb: float = 100.0, total_gb: float = 200.0) -> MagicMock:
     du = MagicMock()
     du.percent = percent
+    du.used = int(used_gb * _GB)
+    du.total = int(total_gb * _GB)
     return du
 
 
-def _make_virtual_memory(percent: float) -> MagicMock:
+def _make_virtual_memory(percent: float, used_gb: float = 8.0, total_gb: float = 16.0) -> MagicMock:
     vm = MagicMock()
     vm.percent = percent
+    vm.used = int(used_gb * _GB)
+    vm.total = int(total_gb * _GB)
     return vm
 
 
@@ -47,6 +54,30 @@ def test_get_host_stats_returns_correct_shape(client: TestClient, monkeypatch):
     assert "ram_percent" in data
     assert "disk_percent" in data
     assert "pool_percent" in data
+    # Absolute GB + CPU-count fields (consumed by the sidebar + dashboard).
+    for key in ("ram_used_gb", "ram_total_gb", "disk_used_gb", "disk_total_gb", "host_cpu_count"):
+        assert key in data
+
+
+def test_get_host_stats_returns_absolute_gb_and_cpu_count(client: TestClient, monkeypatch):
+    """GET /host/stats reports RAM/disk used+total in GB and the logical CPU count."""
+    monkeypatch.setattr("psutil.cpu_percent", lambda interval=None: 5.0)
+    monkeypatch.setattr(
+        "psutil.virtual_memory", lambda: _make_virtual_memory(50.0, used_gb=8.0, total_gb=16.0)
+    )
+    monkeypatch.setattr(
+        "psutil.disk_usage",
+        lambda path: _make_disk_usage(40.0, used_gb=120.0, total_gb=300.0),
+    )
+    monkeypatch.setattr("psutil.cpu_count", lambda logical=True: 12)
+    monkeypatch.setattr("os.path.exists", lambda path: True)
+
+    data = client.get("/host/stats").json()
+    assert data["ram_used_gb"] == 8.0
+    assert data["ram_total_gb"] == 16.0
+    assert data["disk_used_gb"] == 120.0
+    assert data["disk_total_gb"] == 300.0
+    assert data["host_cpu_count"] == 12
 
 
 def test_get_host_stats_rounds_to_one_decimal(client: TestClient, monkeypatch):
