@@ -3,11 +3,13 @@ import { useVMConsole } from '../../api/client'
 import { Button } from '../ui'
 import { Maximize2, Minimize2, Clipboard } from 'lucide-react'
 
-// ── VNC URL builder ── Phase 4 will proxy /novnc → websockify on the host.
-// Keep this function isolated so Phase 4 can update just this one line.
-function buildVncUrl(port) {
+// ── VNC URL builder ── nginx proxies /novnc → websockify (TokenFile plugin)
+// on the host. The backend console endpoint registers a token (the VM name)
+// mapping to 127.0.0.1:<vnc_port>, so we connect by token, not raw port.
+// Keep this isolated so the proxy/token scheme lives in one place.
+function buildVncUrl(token) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${location.host}/novnc/?port=${port}`
+  return `${proto}://${location.host}/novnc/websockify?token=${encodeURIComponent(token)}`
 }
 
 const STATUS = {
@@ -37,7 +39,7 @@ export default function VMConsole({ vmName }) {
         const { default: RFB } = await import('@novnc/novnc')
         setStatus(STATUS.CONNECTING)
 
-        rfb = new RFB(canvasRef.current, buildVncUrl(consoleData.vnc_port))
+        rfb = new RFB(canvasRef.current, buildVncUrl(consoleData.token ?? vmName))
         rfbRef.current = rfb
 
         rfb.scaleViewport = true

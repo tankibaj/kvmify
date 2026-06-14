@@ -135,13 +135,12 @@ def update_network(name: str, req: schemas.NetworkUpdateRequest) -> dict:
 
 @router.get("/{name}/console")
 def console(name: str) -> dict:
-    """Return the VNC port for the VM's console."""
+    """Register a websockify token for the VM and return console connect info."""
     try:
         with libvirt_service.connection() as conn:
-            port = vm_service.console_port(conn, name)
+            return vm_service.register_console_token(conn, name)
     except ValueError as exc:
         raise _map_error(exc)
-    return {"vnc_port": port}
 
 
 @router.get("/{name}/stats", response_model=schemas.VMStats)

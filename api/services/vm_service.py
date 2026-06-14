@@ -645,3 +645,19 @@ def console_port(conn: libvirt.virConnect, name: str) -> int:
     if port is None:
         raise ValueError(f"VM '{name}' has no VNC graphics configured")
     return port
+
+
+def register_console_token(conn: libvirt.virConnect, name: str) -> dict:
+    """Resolve the VM's VNC port and register a websockify token for it.
+
+    Writes ``<NOVNC_TOKEN_DIR>/<name>`` containing ``<name>: 127.0.0.1:<port>``
+    so the shared websockify proxy can route ``?token=<name>`` to this VM.
+
+    Returns ``{vnc_port, token, path}`` for the frontend noVNC client.
+    """
+    port = console_port(conn, name)
+    os.makedirs(config.NOVNC_TOKEN_DIR, exist_ok=True)
+    token_path = os.path.join(config.NOVNC_TOKEN_DIR, name)
+    with open(token_path, "w") as fh:
+        fh.write(f"{name}: 127.0.0.1:{port}\n")
+    return {"vnc_port": port, "token": name, "path": "websockify"}

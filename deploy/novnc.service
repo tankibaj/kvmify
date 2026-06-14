@@ -1,0 +1,17 @@
+[Unit]
+Description=KVMify noVNC WebSocket Proxy
+After=network.target
+
+[Service]
+# Single websockify instance fronting all VM consoles. The TokenFile plugin
+# reads per-VM token files written by the backend into the token-source dir;
+# clients connect with /websockify?token=<vm-name> and are routed to that
+# VM's 127.0.0.1:<vnc_port>.
+ExecStart=/usr/bin/websockify --web /usr/share/novnc 6080 \
+    --token-plugin TokenFile --token-source /var/lib/kvmify/novnc-tokens
+Restart=always
+RestartSec=5
+User=naim
+
+[Install]
+WantedBy=multi-user.target

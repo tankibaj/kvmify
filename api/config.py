@@ -63,6 +63,10 @@ HOST_DISK_PATH: str = os.getenv("KVMIFY_HOST_DISK_PATH", "/")
 # Pool disk path for disk_usage stats
 POOL_DISK_PATH: str = os.getenv("KVMIFY_POOL_DISK_PATH", "/mnt/nvme1")
 
+# noVNC websockify TokenFile dir: each console open writes "<vm>: 127.0.0.1:<port>"
+# here so a single websockify on :6080 can target any VM by ?token=<vm>.
+NOVNC_TOKEN_DIR: str = os.getenv("KVMIFY_NOVNC_TOKEN_DIR", "/var/lib/kvmify/novnc-tokens")
+
 # Ubuntu version → base image filename under BASE_IMAGE_DIR
 BASE_IMAGE_NAMES: dict[str, str] = {
     "2004": "ubuntu-2004-base.img",

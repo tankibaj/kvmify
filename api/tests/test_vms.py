@@ -14,6 +14,7 @@ import libvirt
 import pytest
 from fastapi.testclient import TestClient
 
+from api import config
 from api.services.cloudinit_service import mask_to_prefix
 
 
@@ -700,14 +701,21 @@ def test_update_network_not_found(client: TestClient, patch_libvirt, mock_conn):
 # 15. GET /vms/{name}/console — returns vnc_port
 # ---------------------------------------------------------------------------
 
-def test_console_returns_vnc_port(client: TestClient, patch_libvirt, mock_conn):
-    """GET /vms/{name}/console returns correct vnc_port."""
+def test_console_returns_vnc_port(
+    client: TestClient, patch_libvirt, mock_conn, tmp_path, monkeypatch
+):
+    """GET /vms/{name}/console returns vnc_port + token and writes a token file."""
+    monkeypatch.setattr(config, "NOVNC_TOKEN_DIR", str(tmp_path))
     domain = _make_mock_domain("running-vm", vnc_port=5903)
     mock_conn.lookupByName.return_value = domain
 
     resp = client.get("/vms/running-vm/console")
     assert resp.status_code == 200
-    assert resp.json()["vnc_port"] == 5903
+    body = resp.json()
+    assert body["vnc_port"] == 5903
+    assert body["token"] == "running-vm"
+    token_file = tmp_path / "running-vm"
+    assert token_file.read_text().strip() == "running-vm: 127.0.0.1:5903"
 
 
 def test_console_not_found(client: TestClient, patch_libvirt, mock_conn):
