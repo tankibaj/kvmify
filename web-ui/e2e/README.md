@@ -74,11 +74,23 @@ cd /home/naim/kvmify
 
 ### From a dev machine / Mac
 
-Your Mac just needs network access to the deployed UI (the same address you open
-in your browser). No SSH or libvirt tooling required.
+**Recommended: `--tunnel`** — it SSH-forwards the host UI to `127.0.0.1` so the
+browser never hits the LAN-access blocks that otherwise cause
+`net::ERR_ADDRESS_UNREACHABLE` (macOS "Local Network" permission / Chrome LNA).
+This is the verified-working path (full suite green from a Mac):
 
 ```bash
 cd ~/Repos/kvmify
+./scripts/e2e.sh --tunnel              # all workflows, headless — verified working
+./scripts/e2e.sh --tunnel --headed     # watch it in a browser
+./scripts/e2e.sh --tunnel --grep "VM workflows"
+```
+
+Direct (no tunnel) also works **if** your Mac can reach the host in an automated
+browser — the config already requests the `local-network-access` permission, but
+you may still need to grant the macOS Local Network prompt (see Troubleshooting):
+
+```bash
 ./scripts/e2e.sh                 # headless, against http://192.168.178.101
 ./scripts/e2e.sh --headed        # watch it run in a visible browser
 ```
@@ -96,9 +108,9 @@ cd ~/Repos/kvmify
 ./scripts/e2e.sh -- e2e/templates.spec.js
 
 # Only the fast read-only specs (skip the slow provisioning ones)
-./scripts/e2e.sh -- e2e/dashboard.spec.js e2e/navigation.spec.js \
+./scripts/e2e.sh --tunnel -- e2e/dashboard.spec.js e2e/navigation.spec.js \
                     e2e/images.spec.js e2e/pools.spec.js \
-                    e2e/templates.spec.js e2e/vmdetail.spec.js e2e/provision.spec.js
+                    e2e/templates.spec.js e2e/provision.spec.js
 
 # Against a different deployment
 ./scripts/e2e.sh --base-url http://10.0.0.5
